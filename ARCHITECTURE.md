@@ -1,6 +1,6 @@
 # TravelPlanner — architecture
 
-React Native application built with Expo SDK 58, TypeScript and Expo Router.
+React Native application built with Expo SDK 57, TypeScript and Expo Router.
 The first version plans one journey from home to university, entirely offline.
 
 ## Feature index and entry points
@@ -13,7 +13,7 @@ The first version plans one journey from home to university, entirely offline.
 | Local persistence | `src/features/planner/useStoredPlan.ts` | Load/save one validated plan using AsyncStorage |
 | Shared form field | `src/components/FormField.tsx` | Accessible labelled text input and inline validation |
 | Visual tokens | `src/constants/theme.ts` | Colours, platform typography and shared text styles |
-| Expo configuration | `app.json`, `tsconfig.json` | Native identity, light appearance, Router plugin and strict TypeScript |
+| Expo configuration | `app.json`, `tsconfig.json`, `package.json` | SDK 57 (Expo Go on Android Play Store), native identity, plugins and strict TypeScript |
 
 ## Data flow and contracts
 

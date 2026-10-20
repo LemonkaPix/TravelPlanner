@@ -1,7 +1,7 @@
 # TravelPlanner
 
 Aplikacja mobilna w React Native, która oblicza, kiedy wyjść z domu, żeby dotrzeć
-na uczelnię przed zajęciami. Expo SDK 58, TypeScript, Expo Router. Interfejs po polsku.
+na uczelnię przed zajęciami. Expo SDK 57, TypeScript, Expo Router. Interfejs po polsku.
 
 ## Uruchomienie
 
@@ -12,7 +12,7 @@ npm ci
 npm start
 ```
 
-Otwórz projekt na telefonie w Expo Go obsługującym SDK 58 albo uruchom emulator:
+Otwórz projekt w Expo Go pobranym ze sklepu Play albo uruchom emulator:
 
 ```sh
 npm run android
@@ -49,7 +49,7 @@ Kolejne możliwe kroki: ulubione miejsca i wiele planów, integracja z dostawcą
 tras lub transportu publicznego, lokalne przypomnienia o wyjściu.
 
 Opis modułów i przepływu danych: [ARCHITECTURE.md](ARCHITECTURE.md).
-Dokumentacja użytego środowiska: [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/).
+Wersja środowiska: [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/).
 
 ## Weryfikacja
 
