@@ -35,7 +35,7 @@ export function createDefaultPlan(): PlanInput {
   };
 }
 
-function validMinutes(value: string): boolean {
+export function validMinutes(value: string): boolean {
   return /^\d{1,3}$/.test(value) && Number(value) <= 180;
 }
 

@@ -9,10 +9,11 @@ import { FormField } from '@/components/FormField';
 import { colors, fonts, text } from '@/constants/theme';
 import { calculatePlan, connectionQuery, formatDate, formatTime, validatePlan, type PlanErrors, type PlanInput } from './plan';
 import type { ConnectionQuery, TransitConnection } from '../transit/contract';
-import { transitConfigured } from '../transit/krakowApi';
-import { StopPicker } from '../transit/TransitFields';
 import { ConnectionPicker } from './ConnectionPicker';
 import { useStoredPlan } from './useStoredPlan';
+import { SavedPointPicker } from './SavedPointPicker';
+import type { SavedPoint } from './settings';
+import { useStoredSettings } from './StoredSettingsProvider';
 
 function TimelineStop({ label, date, detail }: { label: string; date: Date; detail: string }) {
   return (
@@ -78,9 +79,15 @@ function DepartureCard({ plan, now, connection }: { plan: PlanInput; now: number
 
 export default function PlannerScreen() {
   const { plan, updatePlan, loading, saving, saved, save, storageError, migrationNotice } = useStoredPlan();
+  const { settings, loading: settingsLoading, storageError: settingsError } = useStoredSettings();
+  const [selectedPoints, setSelectedPoints] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [now, setNow] = useState(() => Date.now());
   const result = validatePlan(plan);
-  const queryInput = connectionQuery(plan);
+  const startPoint = settings.startPoints.find((point) => point.id === selectedPoints.start &&
+    point.name === plan.origin && point.walkMinutes === plan.walkToMinutes && JSON.stringify(point.stop) === JSON.stringify(plan.fromStop));
+  const endPoint = settings.endPoints.find((point) => point.id === selectedPoints.end &&
+    point.name === plan.destination && point.walkMinutes === plan.walkFromMinutes && JSON.stringify(point.stop) === JSON.stringify(plan.toStop));
+  const queryInput = startPoint && endPoint ? connectionQuery(plan) : null;
   const queryKey = queryInput ? JSON.stringify(queryInput) : null;
   const query = useMemo<ConnectionQuery | null>(() => queryKey ? JSON.parse(queryKey) : null, [queryKey]);
   const [selection, setSelection] = useState<{ key: string; connection: TransitConnection } | null>(null);
@@ -96,9 +103,17 @@ export default function PlannerScreen() {
     return () => { clearInterval(interval); subscription.remove(); };
   }, []);
 
-  if (loading) {
+  function applyPoint(point: SavedPoint, start: boolean) {
+    updatePlan(start ? 'origin' : 'destination', point.name);
+    updatePlan(start ? 'fromStop' : 'toStop', point.stop);
+    updatePlan(start ? 'walkToMinutes' : 'walkFromMinutes', point.walkMinutes);
+    updatePlan('bufferMinutes', settings.bufferMinutes);
+    setSelectedPoints((previous) => ({ ...previous, [start ? 'start' : 'end']: point.id }));
+  }
+
+  if (loading || settingsLoading) {
     return (
-      <SafeAreaView style={styles.loading}>
+      <SafeAreaView edges={['top', 'left', 'right']} style={styles.loading}>
         <ActivityIndicator color={colors.blue} accessibilityLabel="Wczytywanie planu" />
         <Text style={text.body}>Wczytuję Twój plan…</Text>
       </SafeAreaView>
@@ -106,7 +121,7 @@ export default function PlannerScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
           <View style={styles.header}>
@@ -119,16 +134,13 @@ export default function PlannerScreen() {
 
           <View style={styles.form}>
             <Text accessibilityRole="header" style={text.heading}>Twój plan</Text>
-            <FormField
-              label="Skąd wychodzisz?" value={plan.origin} maxLength={120}
-              placeholder="np. Dom na Mokotowie" error={errors.origin}
-              onChangeText={(value) => updatePlan('origin', value)}
-            />
-            <FormField
-              label="Gdzie masz zajęcia?" value={plan.destination} maxLength={120}
-              placeholder="np. Wydział Architektury, sala 12" error={errors.destination}
-              onChangeText={(value) => updatePlan('destination', value)}
-            />
+            <Text style={text.body}>Wybierz początek i cel z zapisanych punktów. Znajdziemy najlepsze połączenie na wybrany termin.</Text>
+            {settingsError && <Text accessibilityLiveRegion="polite" style={text.error}>{settingsError}</Text>}
+            <SavedPointPicker label="Zapisane punkty początkowe" points={settings.startPoints} selectedId={startPoint?.id ?? null} onSelect={(point) => applyPoint(point, true)} />
+            <SavedPointPicker label="Zapisane punkty końcowe" points={settings.endPoints} selectedId={endPoint?.id ?? null} onSelect={(point) => applyPoint(point, false)} />
+            {startPoint && endPoint && <Text style={text.body}>Trasa: {plan.origin} → {plan.destination} · zapas {plan.bufferMinutes} min</Text>}
+            {(!settings.startPoints.length || !settings.endPoints.length) &&
+              <Text style={text.body}>Dodaj co najmniej jeden punkt początkowy i końcowy w zakładce „Ustawienia”, aby wyszukać trasę.</Text>}
             <View style={styles.row}>
               <View style={styles.column}>
                 <FormField
@@ -148,28 +160,10 @@ export default function PlannerScreen() {
               </View>
             </View>
             <Text style={text.body}>Datę i godzinę podaj dla dotarcia do miejsca docelowego. Obowiązuje czas polski (Europe/Warsaw).</Text>
+            {errors.date && <Text accessibilityLiveRegion="polite" style={text.error}>{errors.date}</Text>}
+            {errors.time && <Text accessibilityLiveRegion="polite" style={text.error}>{errors.time}</Text>}
             {result.ok && result.arrival.getTime() <= now && <Text accessibilityLiveRegion="polite" style={text.error}>Termin tego planu już minął. Zmień datę lub godzinę.</Text>}
             {migrationNotice && <Text accessibilityLiveRegion="polite" style={text.body}>{migrationNotice}</Text>}
-            {!transitConfigured && <Text accessibilityLiveRegion="polite" style={text.error}>Wyszukiwanie połączeń nie jest jeszcze dostępne. Usługa wymaga konfiguracji.</Text>}
-            <View style={styles.city}><Text style={text.label}>Obszar komunikacji</Text><Text style={text.body}>Kraków i okolice · autobusy i tramwaje KMK</Text></View>
-            <StopPicker key={`from:${plan.city?.id ?? ''}`} label="Przystanek początkowy" cityId={plan.city?.id ?? null}
-              value={plan.fromStop} error={errors.fromStop} onChange={(value) => updatePlan('fromStop', value)} />
-            <StopPicker key={`to:${plan.city?.id ?? ''}`} label="Przystanek końcowy" cityId={plan.city?.id ?? null}
-              value={plan.toStop} error={errors.toStop} onChange={(value) => updatePlan('toStop', value)} />
-            <FormField label="Dojście do przystanku (min)" value={plan.walkToMinutes} maxLength={3}
-              keyboardType="number-pad" error={errors.walkToMinutes} onChangeText={(value) => updatePlan('walkToMinutes', value)} />
-            <FormField label="Dojście od przystanku do celu (min)" value={plan.walkFromMinutes} maxLength={3}
-              keyboardType="number-pad" error={errors.walkFromMinutes} onChangeText={(value) => updatePlan('walkFromMinutes', value)} />
-            <View style={styles.row}>
-              <View style={styles.column}>
-                <FormField
-                  label="Zapas (min)" value={plan.bufferMinutes} maxLength={3}
-                  keyboardType="number-pad" error={errors.bufferMinutes}
-                  onChangeText={(value) => updatePlan('bufferMinutes', value)}
-                />
-              </View>
-            </View>
-            <Text style={text.body}>Zapas to dodatkowy czas przed zajęciami. Każdy czas dojścia może wynosić od 0 do 180 minut.</Text>
             {query && queryKey && <ConnectionPicker key={queryKey} query={query} selected={selected}
               onSelect={(connection) => setSelection(connection ? { key: queryKey, connection } : null)} />}
             <Pressable
@@ -182,12 +176,12 @@ export default function PlannerScreen() {
               <Text style={styles.buttonText}>{saving ? 'Zapisuję…' : 'Zapisz plan'}</Text>
             </Pressable>
             <Text accessibilityLiveRegion="polite" style={storageError ? text.error : styles.saveStatus}>
-              {storageError ?? (!result.ok ? 'Uzupełnij poprawnie pola, aby zapisać plan.'
-                : saved ? 'Konfiguracja zapisana na tym urządzeniu.' : 'Zmiany konfiguracji czekają na zapis.')}
+              {storageError ?? (!result.ok ? 'Wybierz poprawną datę i godzinę, aby zapisać plan.'
+                : saved ? 'Plan zapisany na tym urządzeniu.' : 'Zmiany planu czekają na zapis.')}
             </Text>
           </View>
 
-          <Text style={styles.footer}>Dane rozkładowe: ZTP Kraków. Wyszukiwanie wymaga internetu.{`\n`}Zapisujemy konfigurację; po otwarciu wyszukaj aktualny rozkład.</Text>
+          <Text style={styles.footer}>Dane rozkładowe: ZTP Kraków. Wyszukiwanie wymaga internetu.{`\n`}Plan zapisujesz osobno; po otwarciu wyszukaj aktualny rozkład.</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -217,7 +211,6 @@ const styles = StyleSheet.create({
   stopTime: { color: colors.ink, fontFamily: fonts.clock, fontSize: 14, fontWeight: '600' },
   emptyCard: { padding: 24, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.muted, borderRadius: 22, gap: 10 },
   form: { padding: 22, backgroundColor: colors.white, borderRadius: 22, gap: 20 },
-  city: { gap: 6 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   column: { flexGrow: 1, flexBasis: 130, minWidth: 130 },
   button: { borderRadius: 14, backgroundColor: colors.blue, minHeight: 54, padding: 16, alignItems: 'center', justifyContent: 'center' },

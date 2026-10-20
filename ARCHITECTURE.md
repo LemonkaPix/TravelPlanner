@@ -8,10 +8,14 @@ account, API key, private secret or paid journey-planning service is needed.
 
 | Feature | Entry point | Responsibility |
 | --- | --- | --- |
-| Bootstrap | `package.json` → `expo-router/entry` → `src/app/_layout.tsx` | Router, status bar, background |
-| Planner | `src/app/index.tsx` → `src/features/planner/PlannerScreen.tsx` | Polish form, fixed Kraków area, timeline, explicit save |
+| Bootstrap/navigation | `package.json` → `expo-router/entry` → `src/app/_layout.tsx` | Expo Router bottom tabs: Plan (`index`, default) / Ustawienia (`settings`), shared settings provider, status bar, background |
+| Planner | `src/app/index.tsx` → `src/features/planner/PlannerScreen.tsx` | Select saved start/end points, choose arrival date/time, automatically search/select best route, timeline, explicit plan save |
+| Settings | `src/app/settings.tsx` → `src/features/planner/SettingsScreen.tsx` | Compact start/end lists with right-aligned edit/delete icons; add/edit opens a modal form with ZTP StopPicker; separately saved common buffer |
+| Settings model | `src/features/planner/settings.ts` | Local stable point IDs, names, stops, walking minutes, common buffer; runtime validation and defaults |
+| Settings storage | `src/features/planner/StoredSettingsProvider.tsx` | Shared context/hook, separate AsyncStorage v1, hydration, serialized explicit writes, errors |
+| Saved point selection | `src/features/planner/SavedPointPicker.tsx` | Collapsed dropdowns with selected point details, scrollable options and empty-list guidance in planner |
 | Plan logic | `src/features/planner/plan.ts` | Required fields, walking/buffer validation, Warsaw times, calculations, v1/v2 migration |
-| Proposals | `src/features/planner/ConnectionPicker.tsx` | Explicit search/refresh, selection, schedule age, transit and estimated transfer legs |
+| Proposals | `src/features/planner/ConnectionPicker.tsx` | Automatic search after both saved points are selected; selects and displays the latest feasible departure, with schedule age/transit/estimated transfer legs |
 | Stop search | `src/features/transit/TransitFields.tsx` | Debounced platform search, code/name selections, errors/retry |
 | Mobile HTTP client | `src/features/transit/krakowApi.ts` | Cancellable proxy JSON requests, timeout, runtime guards, Polish errors |
 | Async lifecycle | `src/features/transit/useTransitSearch.ts` | Query tags, cancellation, debounce, retry, suppression of obsolete results |
@@ -48,8 +52,10 @@ stop times and no transfers.txt/frequencies.txt; stop IDs differ across feeds.
 ## Data flow and API
 
 `AsyncStorage → form → validatePlan → connectionQuery → krakowApi → HTTP server`.
+`settings AsyncStorage → StoredSettingsProvider → settings editor / saved point picker`.
+`explicit point selection → current PlanInput fields + common buffer → existing plan validation/search`.
 `official GTFS ZIPs → background worker import/cache → complete timetable snapshot`.
-`worker stop search / backward routing → guarded JSON → explicit selection → calculatePlan → timeline`.
+`worker stop search / backward routing → guarded JSON → automatic best-proposal selection → calculatePlan → timeline`.
 
 | Endpoint | Input | Output |
 | --- | --- | --- |
@@ -143,8 +149,53 @@ non-monotonic trips, unknown references and unsupported timezones fail import.
 PlanInput contains origin/destination labels, date/time strings, fixed city,
 fromStop/toStop, walkToMinutes/walkFromMinutes/bufferMinutes strings. Explicit save
 writes a valid snapshot to `travelplanner.plan.v3`. Selected timetable connections
-are session-only and must be searched again after reopening. Saving configuration
+are session-only and must be searched again after reopening. Saving the plan
 does not require a chosen connection. No automatic writes happen during migration.
+
+Settings are independent of the saved plan: `PlannerSettings` holds `startPoints`,
+`endPoints` and a `bufferMinutes` string. Each `SavedPoint` has a stable local `id`,
+`name` (nonblank, at most 120 characters), a `TransitStop` and a `walkMinutes` string.
+Walking and buffer minutes share the plan's integer-string validation (0–180).
+Reads and writes validate the complete settings snapshot, unique nonempty IDs and
+the existing `isStop` guard (including the supported Kraków city and ZTP namespace).
+No complete plan is needed to save settings. No backend/API contracts changed.
+
+`StoredSettingsProvider`, mounted above both bottom tabs, hydrates once from
+`travelplanner.settings.v1`; defaults are empty lists and 10 minutes of buffer.
+Hydration blocks editing/point application. Invalid JSON, invalid settings and
+storage read failures show a Polish notice without deleting or rewriting the entry.
+An explicit later settings save can replace it, as explained in the notice.
+Each point add/edit/delete and buffer save writes a snapshot explicitly; concurrent
+writes are blocked and context updates only after successful persistence. Write
+failure retains both the previous catalog and the editable draft for retry.
+Settings changes never write `travelplanner.plan.v3` or change the current form.
+
+Settings initially show compact point rows with edit/delete icon buttons on the
+right and an add button below each list. Add/edit opens a full-screen React Native
+modal containing the form; cancel closes it, successful persistence closes it and
+shows a confirmation on the list, and failed writes leave the form/draft open.
+Closing is disabled while saving. Stop search is mounted only while editing.
+
+The planner only exposes saved start/end point dropdowns plus arrival date and
+time fields. Each dropdown initially shows the selected point or a placeholder;
+opening it reveals a bounded scrollable list, and choosing an option closes it.
+Empty catalogs disable their dropdown and direct users to settings. Options copy
+`name` to `origin`/`destination`, `stop` to
+`fromStop`/`toStop`, and `walkMinutes` to `walkToMinutes`/`walkFromMinutes`, set the
+supported city and apply the common buffer. Once both points are selected, their
+query and the chosen deadline automatically trigger a connection search. The API
+returns alternatives in descending departure order; the first is selected as the
+best feasible route (latest departure, then fewer transfers) and displays it as
+the selected result. Date, time and point changes invalidate obsolete connections.
+The user still explicitly saves the completed plan.
+Applying a point again uses its latest saved data; catalog edits/removal do not
+mutate a previously applied point in the form or a saved plan snapshot.
+If a selected point changes or is removed in settings, its dropdown selection
+and connection result become inactive until a current point is selected again,
+so displayed dropdown details cannot disagree with the route being calculated.
+Both routes remain in `src/app/`; feature code stays in `src/features/planner/`.
+Expo Router's installed JavaScript tabs require no new dependencies. The tab bar
+handles the bottom safe area; screens handle top/side insets and keyboard avoidance.
 
 Load v3 first; if absent, read v2 (Jakdojade) then v1 (manual travel duration).
 v2 preserves labels/date/time/walking/buffer but clears both provider-specific
@@ -153,10 +204,11 @@ travelMinutes. Both require new platform selection and explicit save. Older
 entries are never removed; read/parse errors leave them intact. Hydration blocks
 editing and a saved snapshot cannot overwrite edits made during a save.
 
-Stop search waits 350 ms after at least 2 characters. Connection search is explicit.
-Query tags hide obsolete results immediately; effect cleanup and AbortController
-cancel old searches. A changed route/deadline clears selection and remounts the
-proposal picker. Network failure, loading, empty results and retry are in Polish.
+Stop search waits 350 ms after at least 2 characters. Connection search starts
+automatically when both points and a valid deadline are available. Query tags hide
+obsolete results immediately; effect cleanup and AbortController cancel old
+searches. A changed route/deadline clears selection and remounts the proposal
+picker. Network failure, loading, empty results and retry are in Polish.
 
 ## Deployment, dependencies and verification
 
@@ -178,3 +230,6 @@ Do not run tests, linters, builds, typechecks or other automated verification un
 explicitly requested. Changes were reviewed statically; calculation/calendar,
 midnight/DST, transfers, migration and importer/API tests remain deferred. Read
 and update this map before future module/configuration/contract/data-flow changes.
+Settings CRUD, relaunch persistence, tab navigation and point application were
+reviewed in source only; app launch, interactive checks and automated verification
+were not run for the settings implementation.
