@@ -1,20 +1,26 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { createDefaultPlan, isStoredPlan, migrateJakdojadePlan, migrateLegacyPlan, type PlanInput } from './plan';
+import {
+  calendarEntry, createCalendarDay, isStoredCalendar, migrateCalendar, moveCalendarDay, validDayDetails,
+  type CalendarDay, type CalendarDays,
+} from './calendar';
+import { formatDate, isStoredPlan, migrateJakdojadePlan, migrateLegacyPlan, type PlanInput } from './plan';
 
-const STORAGE_KEY = 'travelplanner.plan.v3';
-const PREVIOUS_KEY = 'travelplanner.plan.v2';
-const LEGACY_KEY = 'travelplanner.plan.v1';
+const STORAGE_KEY = 'travelplanner.calendar.v2';
 
 export function useStoredPlan() {
-  const [plan, setPlan] = useState(createDefaultPlan);
+  const [selectedDate, selectDate] = useState(() => formatDate(new Date()));
+  const [drafts, setDrafts] = useState<CalendarDays>({});
+  const [savedDays, setSavedDays] = useState<CalendarDays>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const saveInProgress = useRef(false);
-  const [savedPlan, setSavedPlan] = useState<PlanInput | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [migrationNotice, setMigrationNotice] = useState<string | null>(null);
+  const emptyDay = useMemo(() => createCalendarDay(selectedDate), [selectedDate]);
+  const entry = useMemo(() => calendarEntry(savedDays, selectedDate), [savedDays, selectedDate]);
+  const day = drafts[selectedDate] ?? entry?.day ?? emptyDay;
 
   useEffect(() => {
     let active = true;
@@ -24,28 +30,36 @@ export function useStoredPlan() {
         if (!active) return;
         if (raw !== null) {
           const stored: unknown = JSON.parse(raw);
-          if (!isStoredPlan(stored)) throw new Error('Invalid stored plan');
-          setPlan(stored);
-          setSavedPlan(stored);
-        } else {
-          const previous = await AsyncStorage.getItem(PREVIOUS_KEY);
+          if (!isStoredCalendar(stored)) throw new Error('Invalid calendar');
+          setSavedDays(stored);
+          return;
+        }
+        const previousCalendar = await AsyncStorage.getItem('travelplanner.calendar.v1');
+        if (!active) return;
+        if (previousCalendar !== null) {
+          const migrated = migrateCalendar(JSON.parse(previousCalendar));
+          if (!migrated) throw new Error('Invalid previous calendar');
+          setSavedDays(migrated);
+          setMigrationNotice('Wczytano poprzedni kalendarz. Możesz teraz nadawać nazwy i ustawiać powtarzanie planów.');
+          return;
+        }
+        for (const key of ['travelplanner.plan.v3', 'travelplanner.plan.v2', 'travelplanner.plan.v1']) {
+          const previous = await AsyncStorage.getItem(key);
           if (!active) return;
-          if (previous !== null) {
-            const migrated = migrateJakdojadePlan(JSON.parse(previous));
-            if (!migrated) throw new Error('Invalid previous plan');
-            setPlan(migrated);
-            setMigrationNotice('Wczytano konfigurację poprzedniego planu. Korzystamy teraz z rozkładów ZTP Kraków. Wybierz ponownie oba przystanki i zapisz plan.');
-            return;
-          }
-          const legacy = await AsyncStorage.getItem(LEGACY_KEY);
-          if (!active || legacy === null) return;
-          const migrated = migrateLegacyPlan(JSON.parse(legacy));
-          if (!migrated) throw new Error('Invalid legacy plan');
-          setPlan(migrated);
-          setMigrationNotice('Wczytano poprzedni plan. Wybierz oba przystanki w Krakowie lub okolicy, sprawdź czasy dojścia i zapisz ponownie.');
+          if (previous === null) continue;
+          const value: unknown = JSON.parse(previous);
+          const plan = key.endsWith('v3') ? (isStoredPlan(value) ? value : null)
+            : key.endsWith('v2') ? migrateJakdojadePlan(value) : migrateLegacyPlan(value);
+          if (!plan) throw new Error('Invalid previous plan');
+          const migrated = { ...createCalendarDay(plan.date), plan };
+          if (isStoredPlan(plan)) setSavedDays({ [plan.date]: migrated });
+          else setDrafts({ [plan.date]: migrated });
+          selectDate(plan.date);
+          setMigrationNotice('Przeniesiono poprzedni plan do kalendarza. Otwórz jego dzień, sprawdź punkty i godzinę, a następnie zapisz.');
+          return;
         }
       } catch {
-        if (active) setStorageError('Nie udało się odczytać planu. Zachowano zapisane dane. Możesz ułożyć i zapisać nowy plan.');
+        if (active) setStorageError('Nie udało się odczytać kalendarza. Zachowano zapisane dane. Zapisanie planu zastąpi poprzedni kalendarz.');
       } finally {
         if (active) setLoading(false);
       }
@@ -54,28 +68,74 @@ export function useStoredPlan() {
     return () => { active = false; };
   }, []);
 
-  async function save() {
-    if (loading || saveInProgress.current || !isStoredPlan(plan)) return;
+  async function persist(remove: boolean, departure: string | null = null): Promise<boolean> {
+    if (loading || saveInProgress.current || (!remove && (!isStoredPlan(day.plan) || !validDayDetails(day)))) return false;
+    const date = selectedDate;
+    const sourceDate = entry?.sourceDate ?? date;
+    const snapshot = { ...savedDays };
+    delete snapshot[sourceDate];
+    if (!remove) {
+      const anchorDate = day.recurrence ? sourceDate : date;
+      snapshot[anchorDate] = moveCalendarDay({ ...day, name: day.name.trim(), preferredDeparture: departure }, anchorDate);
+      if (!isStoredCalendar(snapshot)) {
+        setStorageError('Nie można zapisać cyklu z tą godziną w jego dniu początkowym. Sprawdź godzinę przy zmianie czasu.');
+        return false;
+      }
+    }
     saveInProgress.current = true;
     setSaving(true);
-    const snapshot = plan;
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-      setSavedPlan(snapshot);
+      setSavedDays(snapshot);
+      setDrafts((previous) => {
+        if (previous[date] && previous[date] !== day) return previous;
+        const next = { ...previous };
+        delete next[date];
+        return next;
+      });
       setStorageError(null);
       setMigrationNotice(null);
+      return true;
     } catch {
-      setStorageError('Nie udało się zapisać planu. Spróbuj ponownie przyciskiem „Zapisz plan”.');
+      setStorageError('Nie udało się zapisać kalendarza. Twoje zmiany pozostają na ekranie. Spróbuj ponownie.');
+      return false;
     } finally {
       saveInProgress.current = false;
       setSaving(false);
     }
   }
 
-  function updatePlan<K extends keyof PlanInput>(key: K, value: PlanInput[K]) {
-    setPlan((previous) => ({ ...previous, [key]: value }));
+  function updateDay(patch: Partial<CalendarDay>) {
+    if (loading || saveInProgress.current) return;
+    setDrafts((previous) => ({ ...previous, [selectedDate]: { ...(previous[selectedDate] ?? day), ...patch } }));
   }
 
-  const saved = savedPlan !== null && JSON.stringify(savedPlan) === JSON.stringify(plan);
-  return { plan, updatePlan, loading, saving, saved, save, storageError, migrationNotice };
+  function updatePlan<K extends keyof PlanInput>(key: K, value: PlanInput[K]) {
+    if (loading || saveInProgress.current) return;
+    setDrafts((previous) => {
+      const current = previous[selectedDate] ?? day;
+      if (current.plan[key] === value) return previous;
+      return { ...previous, [selectedDate]: { ...current, plan: { ...current.plan, [key]: value }, preferredDeparture: null } };
+    });
+  }
+
+  function preferDeparture(departure: string) {
+    if (saveInProgress.current) return;
+    setDrafts((previous) => {
+      const current = previous[selectedDate] ?? day;
+      if (current.preferredDeparture === departure) return previous;
+      return { ...previous, [selectedDate]: { ...current, preferredDeparture: departure } };
+    });
+  }
+
+  const saved = !!entry && JSON.stringify(entry.day) === JSON.stringify(day);
+  return {
+    day, plan: day.plan, preferredDeparture: day.preferredDeparture, drafts, savedDays, selectedDate, selectDate,
+    sourceDate: entry?.sourceDate ?? selectedDate, hasEntry: !!entry || !!drafts[selectedDate],
+    isSeries: !!entry?.day.recurrence,
+    updatePlan, updateDay, preferDeparture, loading, saving, saved,
+    save: (departure: string | null) => persist(false, departure), remove: () => persist(true), storageError, migrationNotice,
+  };
 }
+
+export type StoredPlan = ReturnType<typeof useStoredPlan>;

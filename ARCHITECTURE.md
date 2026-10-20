@@ -1,6 +1,6 @@
 # TravelPlanner — architecture
 
-React Native / Expo SDK 57 / Expo Router / TypeScript. Plans one trip in Kraków
+React Native / Expo SDK 57 / Expo Router / TypeScript. Plans daily trips in Kraków
 and its KMK surroundings, using free official ZTP GTFS schedule data. No provider
 account, API key, private secret or paid journey-planning service is needed.
 
@@ -9,18 +9,22 @@ account, API key, private secret or paid journey-planning service is needed.
 | Feature | Entry point | Responsibility |
 | --- | --- | --- |
 | Bootstrap/navigation | `package.json` → `expo-router/entry` → `src/app/_layout.tsx` | Expo Router bottom tabs: Plan (`index`, default) / Ustawienia (`settings`), shared settings provider, status bar, background |
-| Planner | `src/app/index.tsx` → `src/features/planner/PlannerScreen.tsx` | Select saved start/end points, choose arrival date/time, automatically search/select best route, timeline, explicit plan save |
+| Planner | `src/app/index.tsx` → `src/features/planner/PlannerScreen.tsx` | Upcoming-trip summary above the calendar; day tap opens the full-screen native modal editor; clock and foreground refresh |
+| Upcoming trip | `src/features/planner/UpcomingPlanPanel.tsx` → `calendar.ts:nextCalendarEntry` | Nearest saved day/cycle occurrence; fresh route lookup, preferred departure, leave time, lines/boarding times, destination/deadline and editor shortcut |
+| Day editor | `src/features/planner/PlanDayEditor.tsx` | Optional day name, saved points, arrival time, course choice, departure timeline; explicit save/delete and return to calendar |
+| Recurrence | `src/features/planner/RecurrenceFields.tsx` → `src/features/planner/calendar.ts` | None or every 1–99 days/weeks/months/years; shared cycle editing/deletion and lazy occurrence resolution |
+| Calendar | `src/features/planner/PlanCalendar.tsx`, `src/features/planner/calendar.ts` | Monday-first Polish month grid, selected/today states, day names, arrival-time, recurrence and saved/draft markers; day model/guard and timezone-independent calendar arithmetic |
 | Settings | `src/app/settings.tsx` → `src/features/planner/SettingsScreen.tsx` | Compact start/end lists with right-aligned edit/delete icons; add/edit opens a modal form with ZTP StopPicker; separately saved common buffer |
 | Settings model | `src/features/planner/settings.ts` | Local stable point IDs, names, stops, walking minutes, common buffer; runtime validation and defaults |
 | Settings storage | `src/features/planner/StoredSettingsProvider.tsx` | Shared context/hook, separate AsyncStorage v1, hydration, serialized explicit writes, errors |
 | Saved point selection | `src/features/planner/SavedPointPicker.tsx` | Collapsed dropdowns with selected point details, scrollable options and empty-list guidance in planner |
 | Plan logic | `src/features/planner/plan.ts` | Required fields, walking/buffer validation, Warsaw times, calculations, v1/v2 migration |
-| Proposals | `src/features/planner/ConnectionPicker.tsx` | Automatic search after both saved points are selected; selects and displays the latest feasible departure, with schedule age/transit/estimated transfer legs |
+| Proposals | `src/features/planner/ConnectionPicker.tsx` | Automatic search for the selected day; up to three selectable courses, restored departure preference, schedule age/transit/estimated transfer legs |
 | Stop search | `src/features/transit/TransitFields.tsx` | Debounced platform search, code/name selections, errors/retry |
 | Mobile HTTP client | `src/features/transit/krakowApi.ts` | Cancellable proxy JSON requests, timeout, runtime guards, Polish errors |
 | Async lifecycle | `src/features/transit/useTransitSearch.ts` | Query tags, cancellation, debounce, retry, suppression of obsolete results |
 | Shared contract/time | `src/features/transit/contract.ts` | DTOs/guards, KRAKOW_CITY, namespaced platform IDs, Warsaw display/form parsing |
-| Storage | `src/features/planner/useStoredPlan.ts` | AsyncStorage v3; explicit snapshots; read-only migration from v2/v1 |
+| Storage | `src/features/planner/useStoredPlan.ts` | Calendar AsyncStorage v2, independent editor drafts, day/cycle save/delete, departure preference; read-only migration from calendar v1 and plan v3/v2/v1 |
 | HTTP server | `server/index.ts` | Node 24 HTTP entry, validation, CORS allowlist, request/concurrency limits |
 | Worker client | `server/krakowTransit.ts` | GTFS worker lifecycle, request correlation, 10 s timeout, restart after worker exit |
 | Timetable worker | `server/gtfsWorker.ts` | Background refresh, atomic snapshot swap, local stop search and routing |
@@ -51,11 +55,14 @@ stop times and no transfers.txt/frequencies.txt; stop IDs differ across feeds.
 
 ## Data flow and API
 
-`AsyncStorage → form → validatePlan → connectionQuery → krakowApi → HTTP server`.
+`calendar AsyncStorage → selected-day draft → validatePlan → connectionQuery → krakowApi → HTTP server`.
 `settings AsyncStorage → StoredSettingsProvider → settings editor / saved point picker`.
-`explicit point selection → current PlanInput fields + common buffer → existing plan validation/search`.
+`calendar day tap → modal editor → resolved occurrence / draft → PlanInput + preferred departure → validation/search`.
+`persisted anchors + recurrence rules → calendarEntry → visible calendar occurrences (no network requests)`.
+`persisted anchors → nextCalendarEntry → saved occurrence + current saved-point match → cancellable connections lookup → calculatePlan → compact summary`.
+`explicit point selection → selected day’s PlanInput fields + common buffer → existing plan validation/search`.
 `official GTFS ZIPs → background worker import/cache → complete timetable snapshot`.
-`worker stop search / backward routing → guarded JSON → automatic best-proposal selection → calculatePlan → timeline`.
+`worker stop search / backward routing → guarded JSON → restored departure / manual proposal selection → calculatePlan → timeline`.
 
 | Endpoint | Input | Output |
 | --- | --- | --- |
@@ -110,7 +117,7 @@ No import, app/server launch or routing checks were run as part of implementatio
 
 ## Routing and time semantics
 
-The form's date/time denotes arrival at the labelled destination. All display/form
+The selected calendar day and its arrival time denote arrival at the labelled destination. All display/form
 parsing uses Europe/Warsaw, independently of the device timezone.
 Stop deadline = planned arrival − buffer − walkFromMinutes.
 Leave home = selected platform departure − walkToMinutes.
@@ -147,10 +154,83 @@ non-monotonic trips, unknown references and unsupported timezones fail import.
 ## Persistence and UI lifecycle
 
 PlanInput contains origin/destination labels, date/time strings, fixed city,
-fromStop/toStop, walkToMinutes/walkFromMinutes/bufferMinutes strings. Explicit save
-writes a valid snapshot to `travelplanner.plan.v3`. Selected timetable connections
-are session-only and must be searched again after reopening. Saving the plan
-does not require a chosen connection. No automatic writes happen during migration.
+fromStop/toStop, walkToMinutes/walkFromMinutes/bufferMinutes strings. A `CalendarDay`
+adds a name (optional, at most 80 characters), nullable `preferredDeparture`
+(canonical UTC ISO) and nullable `recurrence` (`unit`: day/week/month/year;
+`interval`: an integer string from 1 to 99). `CalendarDays` stores anchored entries
+keyed by DD.MM.YYYY. Runtime guards validate every field, the complete PlanInput,
+key/date agreement, recurrence and departure timestamp.
+
+`useStoredPlan` hydrates `travelplanner.calendar.v2`. Persisted anchors and in-memory
+per-date drafts are separate. Closing an editor keeps its draft until relaunch;
+saving another day never implicitly writes unrelated drafts. Writes are explicit
+and serialized. A successful write updates the persisted snapshot and clears only
+the saved draft; a failed write retains both draft and prior snapshot. Input and
+editor closing are disabled while saving. No automatic migration writes occur.
+
+The Plan tab initially shows a compact upcoming-trip panel above the monthly
+calendar and any storage/migration notice. The panel resolves the nearest valid
+saved arrival deadline still in the future, including repeating occurrences.
+Unsaved drafts and the calendar's selected date do not affect its choice.
+`nextCalendarEntry` jumps arithmetically to the next candidate per recurrence,
+respects the same collision rules as the grid and skips expired/invalid wall times
+without expanding an entire cycle. Monthly/yearly missing dates are skipped.
+Once a planned arrival passes, the next clock update selects the following plan.
+
+The panel automatically fetches current proposals for that one occurrence when
+its saved points still match the settings catalog. It restores the preferred
+departure or uses the latest feasible proposal when none was stored. An unavailable
+saved course produces an explicit message, never a silently substituted departure.
+Leave time uses the existing walking/buffer calculations. The panel shows the
+plan name/date, leave time, each vehicle leg's boarding time/line/direction and
+platform, final named destination, planned deadline and calculated destination
+arrival. Cross-midnight departures include their dates. It labels elapsed leave
+times and schedule-only data; loading, empty/error/retry and changed-point states
+have Polish guidance. Missing upcoming plans show guidance to add one.
+
+The clock updates every 15 seconds. Returning to the foreground refreshes both
+the clock and the panel's query tag. The panel reuses the cancellable/timeout-aware
+HTTP search hook; late responses cannot overwrite a changed route or foreground
+refresh. Opening an editor unmounts the panel and cancels its search, avoiding
+competing searches; closing the editor mounts a fresh summary. The summary never
+writes plans, departure preferences or storage. Its shortcut opens the same day
+editor as a calendar tap. No day form or full timeline is mounted on the landing
+screen.
+A day tap opens `PlanDayEditor` in a full-screen React Native Modal, with keyboard
+avoidance, safe-area insets, Android back handling and a return-to-calendar button.
+Successful save/delete closes the editor; failures leave it open for retry.
+The calendar displays Polish months, Monday-first weeks, today's outline, the
+selected day, optional names, arrival times, cycle marks and saved/draft dots.
+The today button changes the visible month without opening an editor. Navigation
+is bounded to 2000–2099. Empty days start at 09:00 with no route or recurrence.
+Calendar arithmetic uses UTC noon; arrival validation/search uses Warsaw time.
+
+Occurrences are resolved lazily by `calendarEntry`; no expanded copies of an
+unbounded cycle are stored or searched. Daily and weekly rules count calendar
+days; monthly rules preserve the day of month, yearly rules preserve month/day.
+Missing dates are skipped (31st in short months, February 29 in non-leap years).
+Rules start on the anchor and have no end before the supported 2099 boundary.
+Explicitly anchored days win collisions; otherwise the latest matching anchor wins.
+The calendar resolves persisted cycles and overlays drafts only on their edited
+dates; an unsaved recurrence does not populate future dates.
+
+Opening any occurrence resolves its own date and Warsaw arrival/departure times.
+Preferred departure dates retain their day offset relative to destination arrival,
+including departures before midnight; wall times are shifted using Warsaw parsing,
+not a fixed UTC offset. An unshiftable DST departure stays unmatched so the picker
+requires a new course. Editing/saving a recurring occurrence changes its whole
+source cycle, retaining the original anchor date; deleting removes the whole cycle.
+The editor explicitly labels this scope and the source date. Disabling recurrence
+replaces the cycle with one plan on the selected date, explained in the form.
+Anchor validation runs before persistence; DST-invalid anchor edits cannot be saved.
+
+A chosen connection is required by the save UI. Only its departure preference is
+persisted, not a cached timetable or connection object. Opening the editor searches
+fresh proposals and restores the matching departure. Without a preference the
+latest feasible departure is selected. If a saved departure is absent, the UI
+requires choosing another course instead of silently replacing it. Up to three
+alternatives are visible/selectable. Backend/API contracts and dependencies are
+unchanged; native generated projects and navigation routes are unchanged.
 
 Settings are independent of the saved plan: `PlannerSettings` holds `startPoints`,
 `endPoints` and a `bufferMinutes` string. Each `SavedPoint` has a stable local `id`,
@@ -168,7 +248,7 @@ An explicit later settings save can replace it, as explained in the notice.
 Each point add/edit/delete and buffer save writes a snapshot explicitly; concurrent
 writes are blocked and context updates only after successful persistence. Write
 failure retains both the previous catalog and the editable draft for retry.
-Settings changes never write `travelplanner.plan.v3` or change the current form.
+Settings changes never write `travelplanner.calendar.v2` or change day/cycle snapshots.
 
 Settings initially show compact point rows with edit/delete icon buttons on the
 right and an add button below each list. Add/edit opens a full-screen React Native
@@ -176,28 +256,32 @@ modal containing the form; cancel closes it, successful persistence closes it an
 shows a confirmation on the list, and failed writes leave the form/draft open.
 Closing is disabled while saving. Stop search is mounted only while editing.
 
-The planner only exposes saved start/end point dropdowns plus arrival date and
-time fields. Each dropdown initially shows the selected point or a placeholder;
-opening it reveals a bounded scrollable list, and choosing an option closes it.
-Empty catalogs disable their dropdown and direct users to settings. Options copy
-`name` to `origin`/`destination`, `stop` to
-`fromStop`/`toStop`, and `walkMinutes` to `walkToMinutes`/`walkFromMinutes`, set the
-supported city and apply the common buffer. Once both points are selected, their
-query and the chosen deadline automatically trigger a connection search. The API
-returns alternatives in descending departure order; the first is selected as the
-best feasible route (latest departure, then fewer transfers) and displays it as
-the selected result. Date, time and point changes invalidate obsolete connections.
-The user still explicitly saves the completed plan.
+The day editor exposes saved start/end point dropdowns and an arrival time. Dropdowns
+initially show the point matching that day's name, platform and walking minutes,
+so reopened days do not require selecting points again. Opening a dropdown reveals
+a bounded scrollable list; selecting an option closes it. Empty catalogs disable
+the dropdown and direct users to settings. Options copy `name` to
+`origin`/`destination`, `stop` to `fromStop`/`toStop`, and `walkMinutes` to
+`walkToMinutes`/`walkFromMinutes`, set the supported city and apply the common buffer.
+Changes clear that day's departure preference. Once both current catalog points
+match and the deadline is valid, search starts automatically. Query changes hide
+obsolete connections and remount the proposal picker; day switches also clear the
+visible connection before loading that day's fresh results.
 Applying a point again uses its latest saved data; catalog edits/removal do not
-mutate a previously applied point in the form or a saved plan snapshot.
-If a selected point changes or is removed in settings, its dropdown selection
-and connection result become inactive until a current point is selected again,
-so displayed dropdown details cannot disagree with the route being calculated.
+mutate previously applied snapshots. If a matching point changes or is removed,
+its dropdown selection and connection query become inactive until a current point
+is selected again, preventing disagreement between point details and route data.
 Both routes remain in `src/app/`; feature code stays in `src/features/planner/`.
 Expo Router's installed JavaScript tabs require no new dependencies. The tab bar
 handles the bottom safe area; screens handle top/side insets and keyboard avoidance.
 
-Load v3 first; if absent, read v2 (Jakdojade) then v1 (manual travel duration).
+Load calendar v2 first. If absent, migrate calendar v1 with blank names and no
+recurrence, preserving every saved day. If neither calendar exists, read plan v3,
+v2 (Jakdojade), then v1 (manual travel duration), wrapping it as one calendar entry.
+Valid v3 plans join the in-memory persisted snapshot; incomplete provider migrations
+remain drafts. The legacy plan date is selected in the calendar without opening
+its editor. Old entries are never rewritten/removed. Invalid present calendars do
+not fall back to stale older keys. The first explicit write persists the v2 snapshot.
 v2 preserves labels/date/time/walking/buffer but clears both provider-specific
 stops and sets Kraków. v1 also defaults each walk to 5 min and discards manual
 travelMinutes. Both require new platform selection and explicit save. Older
@@ -205,9 +289,10 @@ entries are never removed; read/parse errors leave them intact. Hydration blocks
 editing and a saved snapshot cannot overwrite edits made during a save.
 
 Stop search waits 350 ms after at least 2 characters. Connection search starts
-automatically when both points and a valid deadline are available. Query tags hide
+inside the opened editor or the upcoming-trip panel when both current saved
+points and a valid deadline are available. Query tags hide
 obsolete results immediately; effect cleanup and AbortController cancel old
-searches. A changed route/deadline clears selection and remounts the proposal
+searches. A changed route/deadline hides selection and remounts the proposal
 picker. Network failure, loading, empty results and retry are in Polish.
 
 ## Deployment, dependencies and verification
@@ -233,3 +318,8 @@ and update this map before future module/configuration/contract/data-flow change
 Settings CRUD, relaunch persistence, tab navigation and point application were
 reviewed in source only; app launch, interactive checks and automated verification
 were not run for the settings implementation.
+
+Upcoming-trip summary, calendar/modal editing, names, recurrence, day/cycle persistence,
+course selection, migration and deletion were reviewed statically with the
+code-reviewer skill. Tests, lint, typechecks, builds and
+interactive verification were not run, per project instructions.
