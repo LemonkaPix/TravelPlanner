@@ -1,56 +1,58 @@
-# Welcome to your Expo app 👋
+# TravelPlanner
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Aplikacja mobilna w React Native, która oblicza, kiedy wyjść z domu, żeby dotrzeć
+na uczelnię przed zajęciami. Expo SDK 58, TypeScript, Expo Router. Interfejs po polsku.
 
-## Get started
+## Uruchomienie
 
-1. Install dependencies
+Wymagania: Node.js 24 LTS i npm. Zainstaluj zależności i uruchom serwer Expo:
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```sh
+npm ci
+npm start
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+Otwórz projekt na telefonie w Expo Go obsługującym SDK 58 albo uruchom emulator:
 
-### Other setup steps
+```sh
+npm run android
+npm run ios
+npm run web
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Android wymaga skonfigurowanego emulatora Android Studio; symulator iOS wymaga
+macOS i Xcode. Podgląd web otwiera tę samą aplikację w przeglądarce.
 
-## Learn more
+## Pierwsza wersja
 
-To learn more about developing your project with Expo, look at the following resources:
+- Wpisz miejsce wyjścia, budynek lub salę, datę i godzinę zajęć.
+- Podaj czas całej drogi, łącznie z dojściem i oczekiwaniem, oraz dodatkowy zapas.
+- Godzina wyjścia i oś podróży aktualizują się podczas edycji.
+- Przycisk „Zapisz plan” zachowuje jeden plan lokalnie na urządzeniu.
+- Aplikacja obsługuje wyjście poprzedniego dnia, błędne daty i ostrzega o minionych terminach.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Przykład: zajęcia o **09:00**, dojazd **35 min**, zapas **10 min** → wyjście
+o **08:15**, dotarcie na miejsce o **08:50**.
 
-## Join the community
+Daty wpisuj jako `DD.MM.RRRR`, godziny jako `HH:mm`. Dojazd: 1–720 min, zapas:
+0–180 min. Obliczenia używają strefy czasowej telefonu. Zmiana strefy oznacza
+ponowne zinterpretowanie zapisanej daty i godziny w nowej strefie.
 
-Join our community of developers creating universal apps.
+## Zakres i dalszy rozwój
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Czas dojazdu jest wpisywany ręcznie. Miejsca są etykietami; aplikacja nie wyznacza
+tras, nie sprawdza rozkładów ani korków i nie wysyła przypomnień. Nie wymaga
+backendu, kluczy API, logowania ani uprawnień do lokalizacji. Plan jest zapisany
+w nieszyfrowanym AsyncStorage i nie jest wysyłany do serwera.
+
+Kolejne możliwe kroki: ulubione miejsca i wiele planów, integracja z dostawcą
+tras lub transportu publicznego, lokalne przypomnienia o wyjściu.
+
+Opis modułów i przepływu danych: [ARCHITECTURE.md](ARCHITECTURE.md).
+Dokumentacja użytego środowiska: [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/).
+
+## Weryfikacja
+
+Zgodnie z instrukcją projektu podczas przygotowania bazy nie uruchamiano testów,
+lintowania, sprawdzania typów, buildu ani aplikacji. Kod przejrzano ręcznie;
+działanie na telefonie i w przeglądarce wymaga jeszcze sprawdzenia.
