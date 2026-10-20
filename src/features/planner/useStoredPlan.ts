@@ -1,29 +1,51 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { createDefaultPlan, isStoredPlan, type PlanInput } from './plan';
+import { createDefaultPlan, isStoredPlan, migrateJakdojadePlan, migrateLegacyPlan, type PlanInput } from './plan';
 
-const STORAGE_KEY = 'travelplanner.plan.v1';
+const STORAGE_KEY = 'travelplanner.plan.v3';
+const PREVIOUS_KEY = 'travelplanner.plan.v2';
+const LEGACY_KEY = 'travelplanner.plan.v1';
 
 export function useStoredPlan() {
   const [plan, setPlan] = useState(createDefaultPlan);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const saveInProgress = useRef(false);
   const [savedPlan, setSavedPlan] = useState<PlanInput | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [migrationNotice, setMigrationNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
     async function load() {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (!active || raw === null) return;
-        const stored: unknown = JSON.parse(raw);
-        if (!isStoredPlan(stored)) throw new Error('Invalid stored plan');
-        setPlan(stored);
-        setSavedPlan(stored);
+        if (!active) return;
+        if (raw !== null) {
+          const stored: unknown = JSON.parse(raw);
+          if (!isStoredPlan(stored)) throw new Error('Invalid stored plan');
+          setPlan(stored);
+          setSavedPlan(stored);
+        } else {
+          const previous = await AsyncStorage.getItem(PREVIOUS_KEY);
+          if (!active) return;
+          if (previous !== null) {
+            const migrated = migrateJakdojadePlan(JSON.parse(previous));
+            if (!migrated) throw new Error('Invalid previous plan');
+            setPlan(migrated);
+            setMigrationNotice('Wczytano konfigurację poprzedniego planu. Korzystamy teraz z rozkładów ZTP Kraków. Wybierz ponownie oba przystanki i zapisz plan.');
+            return;
+          }
+          const legacy = await AsyncStorage.getItem(LEGACY_KEY);
+          if (!active || legacy === null) return;
+          const migrated = migrateLegacyPlan(JSON.parse(legacy));
+          if (!migrated) throw new Error('Invalid legacy plan');
+          setPlan(migrated);
+          setMigrationNotice('Wczytano poprzedni plan. Wybierz oba przystanki w Krakowie lub okolicy, sprawdź czasy dojścia i zapisz ponownie.');
+        }
       } catch {
-        if (active) setStorageError('Nie udało się odczytać planu. Możesz ułożyć i zapisać nowy.');
+        if (active) setStorageError('Nie udało się odczytać planu. Zachowano zapisane dane. Możesz ułożyć i zapisać nowy plan.');
       } finally {
         if (active) setLoading(false);
       }
@@ -33,23 +55,27 @@ export function useStoredPlan() {
   }, []);
 
   async function save() {
-    if (loading || saving || !isStoredPlan(plan)) return;
+    if (loading || saveInProgress.current || !isStoredPlan(plan)) return;
+    saveInProgress.current = true;
     setSaving(true);
+    const snapshot = plan;
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(plan));
-      setSavedPlan(plan);
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+      setSavedPlan(snapshot);
       setStorageError(null);
+      setMigrationNotice(null);
     } catch {
       setStorageError('Nie udało się zapisać planu. Spróbuj ponownie przyciskiem „Zapisz plan”.');
     } finally {
+      saveInProgress.current = false;
       setSaving(false);
     }
   }
 
-  function updatePlan(key: keyof PlanInput, value: string) {
+  function updatePlan<K extends keyof PlanInput>(key: K, value: PlanInput[K]) {
     setPlan((previous) => ({ ...previous, [key]: value }));
   }
 
   const saved = savedPlan !== null && JSON.stringify(savedPlan) === JSON.stringify(plan);
-  return { plan, updatePlan, loading, saving, saved, save, storageError };
+  return { plan, updatePlan, loading, saving, saved, save, storageError, migrationNotice };
 }

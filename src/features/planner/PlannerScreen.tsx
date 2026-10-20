@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator, AppState, KeyboardAvoidingView, Platform,
   Pressable, ScrollView, StyleSheet, Text, View,
@@ -7,7 +7,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FormField } from '@/components/FormField';
 import { colors, fonts, text } from '@/constants/theme';
-import { calculatePlan, formatDate, formatTime, type PlanErrors, type PlanInput } from './plan';
+import { calculatePlan, connectionQuery, formatDate, formatTime, validatePlan, type PlanErrors, type PlanInput } from './plan';
+import type { ConnectionQuery, TransitConnection } from '../transit/contract';
+import { transitConfigured } from '../transit/krakowApi';
+import { StopPicker } from '../transit/TransitFields';
+import { ConnectionPicker } from './ConnectionPicker';
 import { useStoredPlan } from './useStoredPlan';
 
 function TimelineStop({ label, date, detail }: { label: string; date: Date; detail: string }) {
@@ -25,13 +29,13 @@ function TimelineStop({ label, date, detail }: { label: string; date: Date; deta
   );
 }
 
-function DepartureCard({ plan, now }: { plan: PlanInput; now: number }) {
-  const result = calculatePlan(plan);
+function DepartureCard({ plan, now, connection }: { plan: PlanInput; now: number; connection: TransitConnection | null }) {
+  const result = calculatePlan(plan, connection);
   if (!result.ok) {
     return (
       <View style={styles.emptyCard}>
         <Text style={text.heading}>O której wyjść?</Text>
-        <Text style={text.body}>Uzupełnij plan poniżej. Obliczymy godzinę wyjścia z domu.</Text>
+        <Text style={text.body}>{'message' in result ? result.message : 'Uzupełnij plan poniżej i wybierz połączenie. Obliczymy godzinę wyjścia z domu.'}</Text>
       </View>
     );
   }
@@ -39,8 +43,8 @@ function DepartureCard({ plan, now }: { plan: PlanInput; now: number }) {
   const notice = result.arrival.getTime() <= now
     ? 'Termin tych zajęć już minął. Wybierz nową datę lub godzinę.'
     : result.departure.getTime() < now
-      ? 'Godzina wyjścia już minęła. Wyjście teraz nie zapewni zaplanowanego zapasu.'
-      : `Dojazd ${result.travelMinutes} min + zapas ${result.bufferMinutes} min`;
+      ? 'Godzina wyjścia już minęła. Wyszukaj nowe połączenie lub zmień termin.'
+      : `Dojście do przystanku: ${plan.walkToMinutes} min · od przystanku: ${plan.walkFromMinutes} min · zapas: ${plan.bufferMinutes} min`;
 
   return (
     <View style={styles.ticket}>
@@ -61,8 +65,11 @@ function DepartureCard({ plan, now }: { plan: PlanInput; now: number }) {
       </View>
       <View style={styles.timeline}>
         <TimelineStop label={plan.origin.trim()} date={result.departure} detail="Wyjście" />
-        <TimelineStop label={plan.destination.trim()} date={result.campusArrival} detail="Na miejscu" />
-        <TimelineStop label="Początek zajęć" date={result.arrival} detail="Termin zajęć" />
+        <TimelineStop label={plan.fromStop!.label} date={result.stopDeparture} detail="Po dojściu na przystanek" />
+        <TimelineStop label={plan.fromStop!.label} date={result.stopDeparture} detail="Odjazd wybranego połączenia" />
+        <TimelineStop label={plan.toStop!.label} date={result.stopArrival} detail="Przyjazd na przystanek końcowy" />
+        <TimelineStop label={plan.destination.trim()} date={result.destinationArrival} detail="Po dojściu do celu" />
+        <TimelineStop label="Planowany termin" date={result.arrival} detail="Początek zajęć" />
         <Text style={[text.body, result.departure.getTime() < now && text.error]}>{notice}</Text>
       </View>
     </View>
@@ -70,9 +77,15 @@ function DepartureCard({ plan, now }: { plan: PlanInput; now: number }) {
 }
 
 export default function PlannerScreen() {
-  const { plan, updatePlan, loading, saving, saved, save, storageError } = useStoredPlan();
+  const { plan, updatePlan, loading, saving, saved, save, storageError, migrationNotice } = useStoredPlan();
   const [now, setNow] = useState(() => Date.now());
-  const result = calculatePlan(plan);
+  const result = validatePlan(plan);
+  const queryInput = connectionQuery(plan);
+  const queryKey = queryInput ? JSON.stringify(queryInput) : null;
+  const query = useMemo<ConnectionQuery | null>(() => queryKey ? JSON.parse(queryKey) : null, [queryKey]);
+  const [selection, setSelection] = useState<{ key: string; connection: TransitConnection } | null>(null);
+  const selected = selection?.key === queryKey ? selection.connection : null;
+  useEffect(() => { setSelection(null); }, [queryKey]);
   const errors: PlanErrors = result.ok ? {} : result.errors;
 
   useEffect(() => {
@@ -102,7 +115,7 @@ export default function PlannerScreen() {
             <Text style={text.body}>Zaplanuj drogę. Zostaw sobie chwilę zapasu.</Text>
           </View>
 
-          <DepartureCard plan={plan} now={now} />
+          <DepartureCard plan={plan} now={now} connection={selected} />
 
           <View style={styles.form}>
             <Text accessibilityRole="header" style={text.heading}>Twój plan</Text>
@@ -134,14 +147,20 @@ export default function PlannerScreen() {
                 />
               </View>
             </View>
+            <Text style={text.body}>Datę i godzinę podaj dla dotarcia do miejsca docelowego. Obowiązuje czas polski (Europe/Warsaw).</Text>
+            {result.ok && result.arrival.getTime() <= now && <Text accessibilityLiveRegion="polite" style={text.error}>Termin tego planu już minął. Zmień datę lub godzinę.</Text>}
+            {migrationNotice && <Text accessibilityLiveRegion="polite" style={text.body}>{migrationNotice}</Text>}
+            {!transitConfigured && <Text accessibilityLiveRegion="polite" style={text.error}>Wyszukiwanie połączeń nie jest jeszcze dostępne. Usługa wymaga konfiguracji.</Text>}
+            <View style={styles.city}><Text style={text.label}>Obszar komunikacji</Text><Text style={text.body}>Kraków i okolice · autobusy i tramwaje KMK</Text></View>
+            <StopPicker key={`from:${plan.city?.id ?? ''}`} label="Przystanek początkowy" cityId={plan.city?.id ?? null}
+              value={plan.fromStop} error={errors.fromStop} onChange={(value) => updatePlan('fromStop', value)} />
+            <StopPicker key={`to:${plan.city?.id ?? ''}`} label="Przystanek końcowy" cityId={plan.city?.id ?? null}
+              value={plan.toStop} error={errors.toStop} onChange={(value) => updatePlan('toStop', value)} />
+            <FormField label="Dojście do przystanku (min)" value={plan.walkToMinutes} maxLength={3}
+              keyboardType="number-pad" error={errors.walkToMinutes} onChangeText={(value) => updatePlan('walkToMinutes', value)} />
+            <FormField label="Dojście od przystanku do celu (min)" value={plan.walkFromMinutes} maxLength={3}
+              keyboardType="number-pad" error={errors.walkFromMinutes} onChangeText={(value) => updatePlan('walkFromMinutes', value)} />
             <View style={styles.row}>
-              <View style={styles.column}>
-                <FormField
-                  label="Dojazd (min)" value={plan.travelMinutes} maxLength={3}
-                  keyboardType="number-pad" error={errors.travelMinutes}
-                  onChangeText={(value) => updatePlan('travelMinutes', value)}
-                />
-              </View>
               <View style={styles.column}>
                 <FormField
                   label="Zapas (min)" value={plan.bufferMinutes} maxLength={3}
@@ -150,7 +169,9 @@ export default function PlannerScreen() {
                 />
               </View>
             </View>
-            <Text style={text.body}>Wlicz w dojazd dojście na przystanek, czekanie i drogę do sali. Zapas to dodatkowy czas przed zajęciami.</Text>
+            <Text style={text.body}>Zapas to dodatkowy czas przed zajęciami. Każdy czas dojścia może wynosić od 0 do 180 minut.</Text>
+            {query && queryKey && <ConnectionPicker key={queryKey} query={query} selected={selected}
+              onSelect={(connection) => setSelection(connection ? { key: queryKey, connection } : null)} />}
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: !result.ok || saving, busy: saving }}
@@ -162,11 +183,11 @@ export default function PlannerScreen() {
             </Pressable>
             <Text accessibilityLiveRegion="polite" style={storageError ? text.error : styles.saveStatus}>
               {storageError ?? (!result.ok ? 'Uzupełnij poprawnie pola, aby zapisać plan.'
-                : saved ? 'Plan zapisany na tym urządzeniu.' : 'Zmiany czekają na zapis.')}
+                : saved ? 'Konfiguracja zapisana na tym urządzeniu.' : 'Zmiany konfiguracji czekają na zapis.')}
             </Text>
           </View>
 
-          <Text style={styles.footer}>Czas dojazdu podajesz samodzielnie.{`\n`}Obliczenia działają offline, według czasu telefonu.</Text>
+          <Text style={styles.footer}>Dane rozkładowe: ZTP Kraków. Wyszukiwanie wymaga internetu.{`\n`}Zapisujemy konfigurację; po otwarciu wyszukaj aktualny rozkład.</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -196,6 +217,7 @@ const styles = StyleSheet.create({
   stopTime: { color: colors.ink, fontFamily: fonts.clock, fontSize: 14, fontWeight: '600' },
   emptyCard: { padding: 24, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.muted, borderRadius: 22, gap: 10 },
   form: { padding: 22, backgroundColor: colors.white, borderRadius: 22, gap: 20 },
+  city: { gap: 6 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   column: { flexGrow: 1, flexBasis: 130, minWidth: 130 },
   button: { borderRadius: 14, backgroundColor: colors.blue, minHeight: 54, padding: 16, alignItems: 'center', justifyContent: 'center' },
