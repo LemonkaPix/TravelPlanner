@@ -1,5 +1,6 @@
 import { isRecord, isStop, KRAKOW_CITY, type TransitStop } from '../transit/contract';
 import { validMinutes } from './plan';
+import type { CalendarDays } from './calendar';
 
 export type PointDraft = { name: string; stop: TransitStop | null; walkMinutes: string };
 export type SavedPoint = PointDraft & { id: string; stop: TransitStop };
@@ -34,4 +35,25 @@ export function isPlannerSettings(value: unknown): value is PlannerSettings {
       !value.startPoints.every(isSavedPoint) || !value.endPoints.every(isSavedPoint)) return false;
   const ids = [...value.startPoints, ...value.endPoints].map((point) => point.id);
   return new Set(ids).size === ids.length;
+}
+
+export function settingsWithPlanPoints(settings: PlannerSettings, days: CalendarDays): PlannerSettings {
+  const snapshot = { ...settings, startPoints: [...settings.startPoints], endPoints: [...settings.endPoints] };
+  const ids = new Set([...snapshot.startPoints, ...snapshot.endPoints].map((point) => point.id));
+  let sequence = 0;
+  for (const { plan } of Object.values(days)) {
+    for (const list of ['startPoints', 'endPoints'] as const) {
+      const start = list === 'startPoints';
+      const name = start ? plan.origin : plan.destination;
+      const stop = start ? plan.fromStop : plan.toStop;
+      const walkMinutes = start ? plan.walkToMinutes : plan.walkFromMinutes;
+      if (!stop || snapshot[list].some((point) => point.name === name && point.walkMinutes === walkMinutes &&
+          JSON.stringify(point.stop) === JSON.stringify(stop))) continue;
+      let id: string;
+      do { id = `import-${sequence++}`; } while (ids.has(id));
+      ids.add(id);
+      snapshot[list].push({ id, name, stop, walkMinutes });
+    }
+  }
+  return snapshot;
 }

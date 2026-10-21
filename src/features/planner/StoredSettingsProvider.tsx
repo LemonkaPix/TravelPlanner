@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { createDefaultSettings, isPlannerSettings, type PlannerSettings } from './settings';
+import { createDefaultSettings, isPlannerSettings, settingsWithPlanPoints, type PlannerSettings } from './settings';
+import type { CalendarDays } from './calendar';
 
 const STORAGE_KEY = 'travelplanner.settings.v1';
 type StoredSettings = {
@@ -10,6 +11,7 @@ type StoredSettings = {
   saving: boolean;
   storageError: string | null;
   saveSettings: (snapshot: PlannerSettings) => Promise<boolean>;
+  addPlanPoints: (days: CalendarDays) => Promise<boolean>;
 };
 const SettingsContext = createContext<StoredSettings | null>(null);
 
@@ -61,8 +63,15 @@ export function StoredSettingsProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function addPlanPoints(days: CalendarDays): Promise<boolean> {
+    if (loading || saveInProgress.current) return false;
+    const snapshot = settingsWithPlanPoints(settings, days);
+    if (snapshot.startPoints.length === settings.startPoints.length && snapshot.endPoints.length === settings.endPoints.length) return true;
+    return saveSettings(snapshot);
+  }
+
   return (
-    <SettingsContext.Provider value={{ settings, loading, saving, storageError, saveSettings }}>
+    <SettingsContext.Provider value={{ settings, loading, saving, storageError, saveSettings, addPlanPoints }}>
       {children}
     </SettingsContext.Provider>
   );

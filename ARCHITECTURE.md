@@ -16,7 +16,7 @@ account, API key, private secret or paid journey-planning service is needed.
 | Calendar | `src/features/planner/PlanCalendar.tsx`, `src/features/planner/calendar.ts` | Monday-first Polish month grid, selected/today states, day names, arrival-time, recurrence and saved/draft markers; day model/guard and timezone-independent calendar arithmetic |
 | Settings | `src/app/settings.tsx` → `src/features/planner/SettingsScreen.tsx` | Compact start/end lists with right-aligned edit/delete icons; add/edit opens a modal form with ZTP StopPicker; separately saved common buffer |
 | Settings model | `src/features/planner/settings.ts` | Local stable point IDs, names, stops, walking minutes, common buffer; runtime validation and defaults |
-| Settings storage | `src/features/planner/StoredSettingsProvider.tsx` | Shared context/hook, separate AsyncStorage v1, hydration, serialized explicit writes, errors |
+| Settings storage | `src/features/planner/StoredSettingsProvider.tsx` | Shared context/hook, separate AsyncStorage v1, hydration, serialized explicit writes, missing-point restoration for imported plans, errors |
 | Saved point selection | `src/features/planner/SavedPointPicker.tsx` | Collapsed dropdowns with selected point details, scrollable options and empty-list guidance in planner |
 | Plan logic | `src/features/planner/plan.ts` | Required fields, walking/buffer validation, Warsaw times, calculations, v1/v2 migration |
 | Proposals | `src/features/planner/ConnectionPicker.tsx` | Automatic search for the selected day; up to three selectable courses, restored departure preference, schedule age/transit/estimated transfer legs |
@@ -25,6 +25,7 @@ account, API key, private secret or paid journey-planning service is needed.
 | Async lifecycle | `src/features/transit/useTransitSearch.ts` | Query tags, cancellation, debounce, retry, suppression of obsolete results |
 | Shared contract/time | `src/features/transit/contract.ts` | DTOs/guards, KRAKOW_CITY, namespaced platform IDs, Warsaw display/form parsing |
 | Storage | `src/features/planner/useStoredPlan.ts` | Calendar AsyncStorage v2, independent editor drafts, day/cycle save/delete, departure preference; read-only migration from calendar v1 and plan v3/v2/v1 |
+| Plan export/import | `src/features/planner/PlanTransferPanel.tsx` → `planTransfer.ts`, `planFiles.ts` / `planFiles.web.ts` | JSON export of saved anchors/cycles, validated additive import with preview, date-conflict skipping and missing saved-point restoration |
 | HTTP server | `server/index.ts` | Node 24 HTTP entry, validation, CORS allowlist, request/concurrency limits |
 | Worker client | `server/krakowTransit.ts` | GTFS worker lifecycle, request correlation, 10 s timeout, restart after worker exit |
 | Timetable worker | `server/gtfsWorker.ts` | Background refresh, atomic snapshot swap, local stop search and routing |
@@ -59,6 +60,8 @@ stop times and no transfers.txt/frequencies.txt; stop IDs differ across feeds.
 `settings AsyncStorage → StoredSettingsProvider → settings editor / saved point picker`.
 `calendar day tap → modal editor → resolved occurrence / draft → PlanInput + preferred departure → validation/search`.
 `persisted anchors + recurrence rules → calendarEntry → visible calendar occurrences (no network requests)`.
+`persisted anchors → versioned JSON → native share sheet / browser download`.
+`system file picker → size/format/version/calendar guards → import preview → missing points in settings → merged calendar persistence`.
 `persisted anchors → nextCalendarEntry → saved occurrence + current saved-point match → cancellable connections lookup → calculatePlan → compact summary`.
 `explicit point selection → selected day’s PlanInput fields + common buffer → existing plan validation/search`.
 `official GTFS ZIPs → background worker import/cache → complete timetable snapshot`.
@@ -229,8 +232,8 @@ persisted, not a cached timetable or connection object. Opening the editor searc
 fresh proposals and restores the matching departure. Without a preference the
 latest feasible departure is selected. If a saved departure is absent, the UI
 requires choosing another course instead of silently replacing it. Up to three
-alternatives are visible/selectable. Backend/API contracts and dependencies are
-unchanged; native generated projects and navigation routes are unchanged.
+alternatives are visible/selectable. This calendar/editor flow uses the existing
+backend/API contracts; native generated projects and navigation routes are unchanged.
 
 Settings are independent of the saved plan: `PlannerSettings` holds `startPoints`,
 `endPoints` and a `bufferMinutes` string. Each `SavedPoint` has a stable local `id`,
@@ -249,6 +252,37 @@ Each point add/edit/delete and buffer save writes a snapshot explicitly; concurr
 writes are blocked and context updates only after successful persistence. Write
 failure retains both the previous catalog and the editable draft for retry.
 Settings changes never write `travelplanner.calendar.v2` or change day/cycle snapshots.
+
+The Plan tab includes an export/import panel below the calendar. JSON files have
+`format: "travelplanner-plans"`, `version: 1` and `days: CalendarDays`; they contain
+only saved anchors, including names, complete plan snapshots, recurrence and
+preferred departures. Drafts and unrelated settings are excluded. Export uses
+the native share sheet on iOS/Android and a JSON download in browsers. Native
+export reuses one cached `travelplanner-plany.json`, retained for receiving apps
+that read it after the share sheet closes. Browser exports use timestamped names
+and revoke temporary object URLs after download initiation.
+
+Import uses the system document picker, rejects files over 8 MB before reading,
+limits JSON text to 2 million UTF-16 code units, checks the format/version and
+validates every calendar entry before offering a preview. Invalid files cause no
+writes; unknown versions are rejected. Confirmation adds only anchors whose dates
+are absent from both saved anchors and drafts. Conflicting dates are counted and
+skipped, including repeated imports; existing snapshots and drafts are retained.
+Overlapping recurrences use the existing explicit-anchor/latest-cycle rules,
+explained in the preview. No recurrence is expanded during transfer.
+
+Before writing imported calendar entries, `StoredSettingsProvider.addPlanPoints`
+uses `settingsWithPlanPoints` to add missing origin/destination points from those
+entries. Exact name, walking minutes and serialized stop matches are reused;
+new IDs are unique across both lists. Existing points and common buffer remain
+unchanged. The settings write precedes the calendar write so imported routes can
+resolve immediately on a new device. These are separate storage entries: if the
+calendar write fails, added points may remain; the error explicitly explains this
+and retry reuses them. Settings failure prevents the calendar write. Import uses
+the same synchronous calendar write lock as day saves/deletes. Transfer operations
+block planner editing and duplicate transfer actions; hydration/settings writes
+disable transfer actions. Canceled file selection performs no writes. Native
+picker copies are deleted after reading; browser picker object URLs are revoked.
 
 Settings initially show compact point rows with edit/delete icon buttons on the
 right and an add button below each list. Add/edit opens a full-screen React Native
@@ -297,7 +331,12 @@ picker. Network failure, loading, empty results and retry are in Polish.
 
 ## Deployment, dependencies and verification
 
-The backend requires Node 24 and its own npm install; app dependencies are unchanged.
+The backend requires Node 24 and its own npm install. Plan transfer adds SDK 57
+compatible `expo-document-picker`, `expo-file-system` and `expo-sharing`, installed
+with `npx expo install`. The sharing config plugin is registered in `app.json`
+with its default incoming-sharing features disabled; no native generated files
+are edited. Implementation follows the SDK 57 DocumentPicker, FileSystem and
+Sharing documentation at `https://docs.expo.dev/versions/v57.0.0/sdk/`.
 Server-only packages: csv-parse, yauzl, @types/node, @types/yauzl with separate lockfile.
 HTTP configuration is optional: HOST (default loopback), PORT (3001), ALLOWED_ORIGINS
 (default http://localhost:8081). Root TypeScript excludes server/node_modules/native
@@ -323,3 +362,7 @@ Upcoming-trip summary, calendar/modal editing, names, recurrence, day/cycle pers
 course selection, migration and deletion were reviewed statically with the
 code-reviewer skill. Tests, lint, typechecks, builds and
 interactive verification were not run, per project instructions.
+
+Plan export/import and saved-point restoration were reviewed statically with the
+code-reviewer skill. Tests, lint, typechecks, builds and interactive verification
+were not run, per project instructions.

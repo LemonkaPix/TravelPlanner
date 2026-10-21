@@ -6,10 +6,13 @@ import {
   type CalendarDay, type CalendarDays,
 } from './calendar';
 import { formatDate, isStoredPlan, migrateJakdojadePlan, migrateLegacyPlan, type PlanInput } from './plan';
+import { importableDays } from './planTransfer';
+import { useStoredSettings } from './StoredSettingsProvider';
 
 const STORAGE_KEY = 'travelplanner.calendar.v2';
 
 export function useStoredPlan() {
+  const { addPlanPoints } = useStoredSettings();
   const [selectedDate, selectDate] = useState(() => formatDate(new Date()));
   const [drafts, setDrafts] = useState<CalendarDays>({});
   const [savedDays, setSavedDays] = useState<CalendarDays>({});
@@ -110,6 +113,33 @@ export function useStoredPlan() {
     setDrafts((previous) => ({ ...previous, [selectedDate]: { ...(previous[selectedDate] ?? day), ...patch } }));
   }
 
+  async function importDays(incoming: CalendarDays): Promise<number | null> {
+    if (loading || saveInProgress.current || !isStoredCalendar(incoming)) return null;
+    const additions = importableDays(incoming, savedDays, drafts);
+    const count = Object.keys(additions).length;
+    if (count === 0) return 0;
+    const snapshot = { ...savedDays, ...additions };
+    saveInProgress.current = true;
+    setSaving(true);
+    try {
+      if (!await addPlanPoints(additions)) {
+        setStorageError('Nie udało się dodać punktów importowanych planów. Kalendarz pozostał bez zmian. Spróbuj ponownie.');
+        return null;
+      }
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+      setSavedDays(snapshot);
+      setStorageError(null);
+      setMigrationNotice(null);
+      return count;
+    } catch {
+      setStorageError('Nie udało się zaimportować kalendarza. Dotychczasowe plany i szkice zachowano. Dodane punkty mogły pozostać w ustawieniach; możesz ponowić import.');
+      return null;
+    } finally {
+      saveInProgress.current = false;
+      setSaving(false);
+    }
+  }
+
   function updatePlan<K extends keyof PlanInput>(key: K, value: PlanInput[K]) {
     if (loading || saveInProgress.current) return;
     setDrafts((previous) => {
@@ -133,7 +163,7 @@ export function useStoredPlan() {
     day, plan: day.plan, preferredDeparture: day.preferredDeparture, drafts, savedDays, selectedDate, selectDate,
     sourceDate: entry?.sourceDate ?? selectedDate, hasEntry: !!entry || !!drafts[selectedDate],
     isSeries: !!entry?.day.recurrence,
-    updatePlan, updateDay, preferDeparture, loading, saving, saved,
+    updatePlan, updateDay, preferDeparture, importDays, loading, saving, saved,
     save: (departure: string | null) => persist(false, departure), remove: () => persist(true), storageError, migrationNotice,
   };
 }

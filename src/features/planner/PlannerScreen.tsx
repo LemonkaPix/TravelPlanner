@@ -8,10 +8,12 @@ import { PlanCalendar } from './PlanCalendar';
 import { PlanDayEditor } from './PlanDayEditor';
 import { useStoredPlan } from './useStoredPlan';
 import { UpcomingPlanPanel } from './UpcomingPlanPanel';
+import { PlanTransferPanel } from './PlanTransferPanel';
 
 export default function PlannerScreen() {
   const store = useStoredPlan();
   const [editorVisible, setEditorVisible] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [refreshVersion, setRefreshVersion] = useState(0);
   const today = formatDate(new Date(now));
@@ -28,6 +30,7 @@ export default function PlannerScreen() {
   }, []);
 
   function openPlan(date: string) {
+    if (store.saving || transferBusy) return;
     store.selectDate(date);
     setEditorVisible(true);
   }
@@ -46,9 +49,10 @@ export default function PlannerScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         {!editorVisible && <UpcomingPlanPanel days={store.savedDays} now={now} refreshVersion={refreshVersion} onOpen={openPlan} />}
         <PlanCalendar selectedDate={store.selectedDate} today={today} drafts={store.drafts} savedDays={store.savedDays}
-          disabled={store.saving} onSelect={openPlan} />
+          disabled={store.saving || transferBusy} onSelect={openPlan} />
         {store.storageError && <Text accessibilityLiveRegion="polite" style={text.error}>{store.storageError}</Text>}
         {store.migrationNotice && <Text accessibilityLiveRegion="polite" style={text.body}>{store.migrationNotice}</Text>}
+        <PlanTransferPanel store={store} onBusyChange={setTransferBusy} />
       </ScrollView>
       {editorVisible && <Modal animationType="slide" onRequestClose={() => { if (!store.saving) setEditorVisible(false); }}>
         <PlanDayEditor store={store} onClose={() => setEditorVisible(false)} />
