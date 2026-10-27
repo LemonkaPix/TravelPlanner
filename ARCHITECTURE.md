@@ -26,6 +26,7 @@ Polish. There is no backend, provider API, timetable download or network search.
 | Forms/theme | `src/components/FormField.tsx`, `src/constants/theme.ts` | Accessible labelled fields, existing Nocturne Transit dark surfaces, typography, color and elevation tokens |
 | Safe areas | `src/components/SafeAreaView.tsx` / `SafeAreaView.web.tsx`, `src/app/_layout.tsx` | Native safe-area-context; web CSS safe-area environment values; tab bar bottom/side insets and full-screen modal padding |
 | Configuration | `app.json`, `package.json`, `tsconfig.json` | SDK-compatible dependencies, native Expo configuration, client-only web rendering (`web.output: single`); no API environment variables |
+| App identity | `app.json` → `assets/icon.png`, `assets/favicon.png` | Nocturne Transit clock/route mark; shared iOS/Android launcher icon, Android adaptive masking and web favicon; design notes and generation prompt in `assets/README.md` |
 
 ## Data flow
 
@@ -211,6 +212,13 @@ expo-sharing. The sharing plugin disables incoming-sharing features. System Cloc
 handoff adds expo-intent-launcher (~58.0.3) via `npx expo install`, using SDK 58
 documentation. Backend-only packages were removed with the separate server
 package/lockfile.
+
+The launcher icon is an opaque 1024×1024 PNG with square corners and a central
+clock/route mark in pale blue and mint on navy. Android adaptive icons reuse the
+same opaque artwork as the foreground, with navy behind it and generous margins
+for system masks; there is no separate transparent or monochrome layer. Web uses
+a 64×64 PNG favicon derived from the launcher icon. Launcher changes require a
+new native build/install; no generated native files are maintained here.
 
 Do not run tests, linters, builds, typechecks or automated verification without an
 explicit user request. This change uses static source review with code-reviewer;
