@@ -57,7 +57,7 @@ npx expo run:android --device
 
 Polecenie generuje projekt natywny z `app.json`, buduje go, instaluje na telefonie
 i uruchamia TravelPlanner. Otwieraj zainstalowany TravelPlanner. `npm run android`
-tylko uruchamia serwer Expo i nie buduje aplikacji ani nie dodaje uprawnień.
+również uruchamia lokalny build przez `expo run:android`.
 Przy zmianie uprawnień lub zależności natywnych potrzebna jest ponowna kompilacja
 uwzględniająca konfigurację. Nie edytuj ręcznie wygenerowanych plików `android/`.
 
@@ -67,6 +67,55 @@ w Expo Go i import pliku w TravelPlanner.
 Zegar przyjmuje godzinę bez daty. Alarm można przekazać, gdy jego najbliższe
 wystąpienie odpowiada wybranemu dniowi, zwykle w ciągu 24 godzin. Już dodane
 budziki zmieniasz i usuwasz w Zegarze; edycja planu ich nie aktualizuje.
+
+## Widget na pulpicie Androida
+
+Widget „Najbliższy dojazd” pokazuje godzinę i datę wyjścia, cel, termin dotarcia
+oraz pierwszy odjazd. Uwzględnia zapisane plany cykliczne. Domyślnie zajmuje
+4×3 pola; możesz zmienić jego rozmiar. Dotknięcie planu otwiera planer.
+
+### APK przez EAS i instalacja kodem QR
+
+Projekt ma profil `preview` w `eas.json`, który buduje APK do instalacji poza Google Play.
+Zaloguj się do EAS (jeśli jeszcze tego nie robiłeś), a następnie z katalogu projektu
+uruchom build w chmurze:
+
+```sh
+npx eas-cli login
+npx eas-cli build --platform android --profile preview
+```
+
+Po zakończeniu otwórz link do buildu wyświetlony w terminalu albo stronę buildu w EAS.
+W sekcji artefaktu wybierz **Install**, zeskanuj kod QR telefonem, pobierz APK
+i otwórz pobrany plik, aby zainstalować TravelPlanner. Jeśli Android zablokuje
+instalację, zezwól przeglądarce na instalowanie aplikacji z tego źródła i ponów próbę.
+
+Po zmianie zależności natywnych, takich jak widget, trzeba zbudować i zainstalować
+nowy APK. Do lokalnego buildu przez Android SDK i USB użyj zamiast tego:
+
+```sh
+npx expo prebuild --platform android
+npx expo run:android --device
+```
+
+Konfiguracja `expo-build-properties` w `app.json` zachowuje konstruktory Room
+i InputMerger używane przez bibliotekę widgetu. Zapobiega to [znanej awarii
+przy starcie APK release w Expo SDK 58](https://github.com/sAleksovski/react-native-android-widget/issues/159),
+gdy R8 usuwa te konstruktory podczas optymalizacji. Poprawka wymaga nowego APK;
+przy lokalnym buildzie najpierw wykonaj powyższy `prebuild`, aby zastosować reguły.
+
+Następnie otwórz TravelPlanner → Ustawienia → Widget na pulpicie → Dodaj widget
+i potwierdź w oknie systemowym. Możesz też przytrzymać puste miejsce na pulpicie
+i wybrać Widgety → TravelPlanner → Najbliższy dojazd. Expo Go nie obsługuje widgetu;
+przenieś z niego plany przez eksport/import JSON.
+
+Widget odczytuje wyłącznie zapisane plany. Aktualizuje się po zapisie, imporcie,
+usunięciu planu i powrocie do aplikacji. W tle Android odświeża go nie częściej niż
+co 30 minut i może opóźniać aktualizacje, np. podczas oszczędzania baterii.
+Po upływie terminu dotarcia kolejna aktualizacja wybierze następny plan.
+Sprawdź datę i godzinę ostatniej aktualizacji na widżecie; przycisk „Odśwież”
+odczytuje plany ponownie bez otwierania aplikacji. Nie jest to budzik ani zegar
+odliczający na żywo. Nie wymaga internetu ani uprawnienia do powiadomień.
 
 ## Dane i kopie zapasowe
 

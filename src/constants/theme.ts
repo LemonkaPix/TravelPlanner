@@ -51,7 +51,7 @@ export const colors = {
   blue: '#4d8eff',
   white: '#ffffff',
   muted: '#94a3b8',
-};
+} as const;
 
 export const fonts = {
   display: Platform.select({ ios: 'System', android: 'sans-serif', default: 'System' }),

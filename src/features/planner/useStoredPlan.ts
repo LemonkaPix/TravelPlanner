@@ -2,14 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
-  calendarEntry, createCalendarDay, isStoredCalendar, migrateCalendar, moveCalendarDay, validDayDetails,
+  calendarEntry, createCalendarDay, isStoredCalendar, moveCalendarDay, validDayDetails,
   type CalendarDay, type CalendarDays,
 } from './calendar';
-import { formatDate, isStoredPlan, calculatePlan, migratePreviousPlan, type PlanInput } from './plan';
+import { formatDate, calculatePlan, type PlanInput } from './plan';
+import { CALENDAR_STORAGE_KEY as STORAGE_KEY, readStoredCalendar } from './calendarStorage';
+import { useWidgetSync } from '../widget/useWidgetSync';
 import { importableDays } from './planTransfer';
 import { useStoredSettings } from './StoredSettingsProvider';
-
-const STORAGE_KEY = 'travelplanner.calendar.v3';
 
 function useStoredPlanState() {
   const { addPlanPoints, settings } = useStoredSettings();
@@ -27,42 +27,18 @@ function useStoredPlanState() {
   }, [selectedDate, settings.bufferMinutes]);
   const entry = useMemo(() => calendarEntry(savedDays, selectedDate), [savedDays, selectedDate]);
   const day = drafts[selectedDate] ?? entry?.day ?? emptyDay;
+  const { widgetError, refreshWidgets } = useWidgetSync(savedDays, loading);
 
   useEffect(() => {
     let active = true;
     async function load() {
       try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const stored = await readStoredCalendar();
         if (!active) return;
-        if (raw !== null) {
-          const stored: unknown = JSON.parse(raw);
-          if (!isStoredCalendar(stored)) throw new Error('Invalid calendar');
-          setSavedDays(stored);
-          return;
-        }
-        const previousCalendar = await AsyncStorage.getItem('travelplanner.calendar.v2') ?? await AsyncStorage.getItem('travelplanner.calendar.v1');
-        if (!active) return;
-        if (previousCalendar !== null) {
-          const migrated = migrateCalendar(JSON.parse(previousCalendar));
-          if (!migrated) throw new Error('Invalid previous calendar');
-          setSavedDays(migrated);
-          setMigrationNotice('Wczytano poprzedni kalendarz. Uzupełnij ręcznie linie i godziny połączeń w zapisanych planach.');
-          return;
-        }
-        for (const key of ['travelplanner.plan.v3', 'travelplanner.plan.v2', 'travelplanner.plan.v1']) {
-          const previous = await AsyncStorage.getItem(key);
-          if (!active) return;
-          if (previous === null) continue;
-          const value: unknown = JSON.parse(previous);
-          const plan = migratePreviousPlan(value);
-          if (!plan) throw new Error('Invalid previous plan');
-          const migrated = { ...createCalendarDay(plan.date), plan };
-          if (isStoredPlan(plan)) setSavedDays({ [plan.date]: migrated });
-          else setDrafts({ [plan.date]: migrated });
-          selectDate(plan.date);
-          setMigrationNotice('Przeniesiono poprzedni plan do kalendarza. Otwórz jego dzień, sprawdź punkty i godzinę, a następnie zapisz.');
-          return;
-        }
+        setSavedDays(stored.days);
+        setDrafts(stored.drafts);
+        if (stored.selectedDate) selectDate(stored.selectedDate);
+        setMigrationNotice(stored.notice);
       } catch {
         if (active) setStorageError('Nie udało się odczytać kalendarza. Zachowano zapisane dane. Zapisanie planu zastąpi poprzedni kalendarz.');
       } finally {
@@ -164,7 +140,7 @@ function useStoredPlanState() {
     sourceDate: entry?.sourceDate ?? selectedDate, hasEntry: !!entry || !!drafts[selectedDate],
     isSeries: !!entry?.day.recurrence,
     updatePlan, updateDay, importDays, loading, saving, saved,
-    save: () => persist(false), remove: () => persist(true), storageError, migrationNotice,
+    save: () => persist(false), remove: () => persist(true), storageError, migrationNotice, widgetError, refreshWidgets,
   };
 }
 

@@ -8,7 +8,7 @@ Polish. There is no backend, provider API, timetable download or network search.
 
 | Feature | Entry point | Responsibility |
 | --- | --- | --- |
-| Bootstrap/navigation | `package.json` → `expo-router/entry` → `src/app/_layout.tsx` | Plan (`index`), Edytor (`editor`), Ustawienia (`settings`); shared settings and calendar providers, dark theme |
+| Bootstrap/navigation | `package.json` → `index.ts` → platform widget registration + `expo-router/entry` → `src/app/_layout.tsx` | Android headless widget handler before Router; Plan (`index`), Edytor (`editor`), Ustawienia (`settings`); shared settings and calendar providers, dark theme |
 | Planner | `src/app/index.tsx` → `src/features/planner/PlannerScreen.tsx` | Compact date header, upcoming trip, weekly/monthly calendar, single selected-day edit/add card, destination shortcuts for empty days, modal day editor, foreground clock refresh |
 | Upcoming trip | `src/features/planner/UpcomingPlanPanel.tsx` → `calendar.ts:nextCalendarEntry` | Nearest saved arrival deadline, prominent leave time, destination and first ride; expandable full route with walking legs, arrival, buffer and edit action; incomplete migrated plans prompt completion |
 | Day editor | `src/app/editor.tsx` & planner modal → `src/features/planner/PlanDayEditor.tsx` | Start/end saved-point selection supplies place names, stops and walking times; settings supply buffer; deadline, name, recurrence, manual connection, timeline, explicit save/delete |
@@ -17,7 +17,8 @@ Polish. There is no backend, provider API, timetable download or network search.
 | Local journey model | `src/features/planner/journey.ts` | Label-only Stop, ManualLeg input, resolved ManualConnection/JourneyLeg, chronological and stop continuity validation, legacy stop-label conversion |
 | Date/time | `src/features/planner/dateTime.ts` | Europe/Warsaw formatting/parsing; rejects nonexistent or ambiguous DST wall times; shared record/label guards |
 | Calendar/recurrence | `src/features/planner/PlanCalendar.tsx`, `calendar.ts`, `RecurrenceFields.tsx` | Monday-first weekly strip with date/time and plan markers, expandable month with marker legend, today shortcut; selected-day summary lives below the calendar; lazy recurrence and next occurrence, calendar guards and migration |
-| Plan storage | `src/features/planner/useStoredPlan.ts` | Shared calendar context, AsyncStorage v3, isolated per-date drafts, serialized explicit writes, cycle editing/deletion, additive import |
+| Plan storage | `src/features/planner/useStoredPlan.ts`, `calendarStorage.ts` | Shared calendar context, AsyncStorage v3, shared read-only hydration/migration for app and widget, isolated per-date drafts, serialized explicit writes, cycle editing/deletion, additive import |
+| Android home screen widget | `src/features/widget/register.android.ts` → `widgetTaskHandler.tsx`, `PlanWidget.tsx`, `widgetData.ts`; `WidgetSettingsSection.tsx` | Nearest saved arrival deadline, large leave time/date, destination/name, deadline, first ride/stop, updated timestamp; pin request, manual refresh, periodic headless reads, save/import/delete and foreground updates |
 | Settings | `src/app/settings.tsx` → `src/features/planner/SettingsScreen.tsx` | Local start/end point CRUD in modals with typed stop names, common buffer, alarm preferences, file transfer and local-data information |
 | Settings model/storage | `src/features/planner/settings.ts`, `StoredSettingsProvider.tsx` | Stable local point IDs, validation, AsyncStorage v3, hydration, serialized writes, read-only v2/v1 migration, missing-point restoration for imports |
 | System alarms | `src/features/planner/AlarmSettingsSection.tsx`, `DayAlarmPanel.tsx` → `alarms.ts`, `systemAlarms.ts` | Preparation time and optional series; saved selected-day/editor preview plus separate handoff at the exact leave time; Android Clock intents with date safety guards; Expo Go creation guard; manual times on iOS/web |
@@ -38,6 +39,7 @@ Polish. There is no backend, provider API, timetable download or network search.
 `persisted anchors → versioned JSON → native share sheet / browser download`.
 `document picker → size/format/version/plan guards → import preview → missing settings points → additive calendar write`.
 `saved selected occurrence + alarm preferences → preparation alarm series and exact leave-time alarm → preview → separate Android system Clock handoffs`.
+`persisted calendar → shared readStoredCalendar → nextCalendarEntry + calculatePlan → Android home screen widget (headless/foreground/manual refresh)`.
 
 The removed `server/` source, server package/lockfile, transit HTTP client/search
 hooks, provider DTOs, stop search, automatic connection picker and `.env.example`
@@ -203,6 +205,46 @@ filenames and revokes object URLs. Import uses the system document picker, remov
 native picker copies after reading and revokes web picker object URLs. Transfer
 operations and hydration prevent duplicate/dependent actions.
 
+## Android home screen widget
+
+`app.json` registers `UpcomingPlan` with the `react-native-android-widget` config
+plugin: Polish gallery label “Najbliższy dojazd”, default 4×3 cells (250×250 dp on
+older launchers), horizontal/vertical resizing, home screen category and a
+1,800,000 ms update period. `index.ts` imports platform-specific registration
+before Expo Router. iOS/web use a no-op registration module. Expo Go and older
+native builds are detected before importing the widget library using
+`Constants.expoVersion` and `TurboModuleRegistry.get('AndroidWidget')`.
+
+`widgetTaskHandler` handles addition, resizing, periodic updates and manual
+refresh clicks; deletion performs no work. Each refresh reads persisted calendar
+data through `calendarStorage.ts`, including existing read-only migration rules.
+Invalid current storage shows an error instead of falling back or claiming there
+are no plans. Drafts never enter the widget. The same `nextCalendarEntry` and
+`calculatePlan` logic as the planner handles recurrence, collisions, Warsaw wall
+times, DST validation and overnight journeys. Incomplete migrated plans prompt
+completion. Empty calendars invite adding a plan. Dates accompany departure,
+deadline and boarding to avoid ambiguity across midnight. Smaller sizes hide the
+separate stop row; the leave time remains prominent. The widget uses native widget
+primitives and a `use no memo` directive because rendering invokes a pure function
+outside React. Theme color tokens retain literal types for widget color props.
+
+`useWidgetSync` refreshes installed widget instances after hydration, successful
+calendar writes (save/delete/import) and foreground resume. Refresh failures do
+not turn a successful calendar write into a failed save. Settings expose a retry
+and a pin request; launcher acceptance is not reported as confirmed installation.
+Launchers without pinning support get manual gallery instructions. Widget plan
+taps open `travelplanner:///`; its independent refresh button runs the headless
+handler without opening the app. Each instance renders at its own height.
+
+Android periodic updates run no more frequently than every 30 minutes and may be
+delayed by the system; this is not an exact scheduler. The widget shows an update
+date/time and absolute departure time instead of a stale countdown. After a plan's
+deadline passes, the next refresh selects the next saved occurrence. No alarm,
+notification permission, server, custom native source or additional storage key
+is required. Widget errors and native-render dispatch do not confirm that a
+launcher displayed the update. A native rebuild/install is required; Expo Go
+remains usable for the other features with widget actions disabled.
+
 ## Dependencies and verification
 
 Native configuration belongs in `app.json`; generated ios/android files are not
@@ -212,6 +254,20 @@ expo-sharing. The sharing plugin disables incoming-sharing features. System Cloc
 handoff adds expo-intent-launcher (~58.0.3) via `npx expo install`, using SDK 58
 documentation. Backend-only packages were removed with the separate server
 package/lockfile.
+Android widgets add `react-native-android-widget` (^0.24.0) using
+`npx expo install`, with its config plugin declared in `app.json`. The installed
+SDK 58 `expo-widgets` implementation has no Android timeline updates, so this
+feature uses a headless widget handler for periodic persisted-calendar reads.
+The widget library brings WorkManager 2.8.1 / Room 2.5.0. With SDK 58's default
+release minification and AGP 9's R8 strict full mode, their legacy keep rules can
+lose reflection-only no-argument constructors and crash in WorkManager's startup
+initializer before React Native starts. `expo-build-properties` (~58.0.11),
+installed with `npx expo install`, adds explicit constructor keep rules for
+`RoomDatabase` and `InputMerger` subclasses through `android.extraProguardRules`
+in `app.json`. Release optimization stays enabled. This addresses the failure
+documented in https://github.com/sAleksovski/react-native-android-widget/issues/159;
+the reported device crash still needs confirmation from logcat or a rebuilt APK.
+Prebuild applies these rules; generated native files are not hand-edited.
 
 The launcher icon is an opaque 1024×1024 PNG with square corners and a central
 clock/route mark in pale blue and mint on navy. Android adaptive icons reuse the

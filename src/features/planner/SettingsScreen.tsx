@@ -15,6 +15,7 @@ import { validatePoint, type PointDraft, type PointList, type SavedPoint } from 
 import { useStoredSettings } from './StoredSettingsProvider';
 import { useStoredPlan } from './useStoredPlan';
 import { AlarmSettingsSection } from './AlarmSettingsSection';
+import { WidgetSettingsSection } from '../widget/WidgetSettingsSection';
 
 const emptyPoint = (): PointDraft => ({ name: '', stop: null, walkMinutes: '5' });
 const BUFFER_PRESETS = [
@@ -512,6 +513,7 @@ export default function SettingsScreen() {
           <BufferSection />
 
           <AlarmSettingsSection />
+          <WidgetSettingsSection />
 
           {/* SEKCJA 3: Kopie zapasowe i synchronizacja */}
           <PlanTransferPanel store={planStore} />

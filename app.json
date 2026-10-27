@@ -30,7 +30,35 @@
     "plugins": [
       "expo-router",
       "expo-status-bar",
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "UpcomingPlan",
+              "label": "Najbliższy dojazd",
+              "description": "Godzina wyjścia, cel, termin dotarcia i pierwszy odjazd z zapisanego planu.",
+              "minWidth": "250dp",
+              "minHeight": "250dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 3,
+              "resizeMode": "horizontal|vertical",
+              "widgetCategory": "home_screen",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ],
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "# WorkManager 2.8.1 (react-native-android-widget): constructors used through reflection.\n# Required by AGP 9 / R8 strict full mode: https://github.com/sAleksovski/react-native-android-widget/issues/159\n-keep class * extends androidx.room.RoomDatabase {\n    public <init>();\n}\n-keep class * extends androidx.work.InputMerger {\n    public <init>();\n}"
+          }
+        }
+      ]
     ],
     "extra": {
       "router": {
