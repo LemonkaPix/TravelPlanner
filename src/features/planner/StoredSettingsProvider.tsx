@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { createDefaultSettings, isPlannerSettings, settingsWithPlanPoints, type PlannerSettings } from './settings';
+import { createDefaultSettings, isPlannerSettings, migrateSettings, settingsWithPlanPoints, type PlannerSettings } from './settings';
 import type { CalendarDays } from './calendar';
 
-const STORAGE_KEY = 'travelplanner.settings.v1';
+const STORAGE_KEY = 'travelplanner.settings.v2';
 type StoredSettings = {
   settings: PlannerSettings;
   loading: boolean;
@@ -26,9 +26,11 @@ export function StoredSettingsProvider({ children }: { children: ReactNode }) {
     let active = true;
     async function load() {
       try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const current = await AsyncStorage.getItem(STORAGE_KEY);
+        const raw = current ?? await AsyncStorage.getItem('travelplanner.settings.v1');
         if (!active || raw === null) return;
-        const stored: unknown = JSON.parse(raw);
+        const value: unknown = JSON.parse(raw);
+        const stored = current === null ? migrateSettings(value) : value;
         if (!isPlannerSettings(stored)) throw new Error('Invalid stored settings');
         setSettings(stored);
       } catch {

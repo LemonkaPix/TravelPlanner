@@ -1,11 +1,10 @@
-import { isRecord, isTimestamp, parseTransitDateTime } from '../transit/contract';
-import { createDefaultPlan, formatDate, formatTime, isStoredPlan, validatePlan, type PlanInput } from './plan';
+import { isRecord } from './dateTime';
+import { createDefaultPlan, formatDate, isStoredPlan, migratePreviousPlan, validatePlan, type PlanInput } from './plan';
 
 export type RecurrenceUnit = 'day' | 'week' | 'month' | 'year';
 export type Recurrence = { unit: RecurrenceUnit; interval: string };
 export type CalendarDay = {
   plan: PlanInput;
-  preferredDeparture: string | null;
   name: string;
   recurrence: Recurrence | null;
 };
@@ -13,7 +12,7 @@ export type CalendarDays = Record<string, CalendarDay>;
 export type CalendarEntry = { sourceDate: string; day: CalendarDay };
 
 export function createCalendarDay(date: string): CalendarDay {
-  return { plan: { ...createDefaultPlan(), date }, preferredDeparture: null, name: '', recurrence: null };
+  return { plan: { ...createDefaultPlan(), date }, name: '', recurrence: null };
 }
 
 export function validRecurrence(value: unknown): value is Recurrence | null {
@@ -29,17 +28,20 @@ export function validDayDetails(day: CalendarDay): boolean {
 export function isStoredCalendar(value: unknown): value is CalendarDays {
   return isRecord(value) && Object.entries(value).every(([date, day]) =>
     isRecord(day) && isStoredPlan(day.plan) && day.plan.date === date &&
-    typeof day.name === 'string' && day.name.length <= 80 && validRecurrence(day.recurrence) &&
-    (day.preferredDeparture === null || isTimestamp(day.preferredDeparture)));
+    typeof day.name === 'string' && day.name.length <= 80 && validRecurrence(day.recurrence));
 }
 
 export function migrateCalendar(value: unknown): CalendarDays | null {
   if (!isRecord(value)) return null;
   const days: CalendarDays = {};
   for (const [date, day] of Object.entries(value)) {
-    if (!isRecord(day) || !isStoredPlan(day.plan) || day.plan.date !== date ||
-        (day.preferredDeparture !== null && !isTimestamp(day.preferredDeparture))) return null;
-    days[date] = { plan: day.plan, preferredDeparture: day.preferredDeparture, name: '', recurrence: null };
+    if (!isRecord(day)) return null;
+    const plan = migratePreviousPlan(day.plan);
+    if (!plan || plan.date !== date || !isStoredPlan(plan)) return null;
+    const name = day.name === undefined ? '' : day.name;
+    const recurrence = day.recurrence === undefined ? null : day.recurrence;
+    if (typeof name !== 'string' || name.length > 80 || !validRecurrence(recurrence)) return null;
+    days[date] = { plan, name, recurrence };
   }
   return days;
 }
@@ -71,16 +73,11 @@ function occursOn(source: CalendarDay, date: string): boolean {
 
 export function moveCalendarDay(day: CalendarDay, date: string): CalendarDay {
   if (day.plan.date === date) return day;
-  let preferredDeparture: string | null = null;
-  if (day.preferredDeparture) {
-    const departure = new Date(day.preferredDeparture);
-    const offset = Math.round((calendarDate(formatDate(departure)).getTime() - calendarDate(day.plan.date).getTime()) / 86_400_000);
-    const target = calendarDate(date);
-    target.setUTCDate(target.getUTCDate() + offset);
-    // An unshiftable wall time stays unmatched; the picker must ask for a new course.
-    preferredDeparture = parseTransitDateTime(calendarDateKey(target), formatTime(departure))?.toISOString() ?? day.preferredDeparture;
-  }
-  return { ...day, plan: { ...day.plan, date }, preferredDeparture };
+  const difference = calendarDate(date).getTime() - calendarDate(day.plan.date).getTime();
+  const shift = (value: string) => calendarDateKey(new Date(calendarDate(value).getTime() + difference));
+  return { ...day, plan: { ...day.plan, date, legs: day.plan.legs.map((leg) => ({
+    ...leg, departureDate: shift(leg.departureDate), arrivalDate: shift(leg.arrivalDate),
+  })) } };
 }
 
 export function calendarEntry(days: CalendarDays, date: string): CalendarEntry | null {

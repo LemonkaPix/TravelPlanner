@@ -1,9 +1,10 @@
-import { isRecord, isStop, KRAKOW_CITY, type TransitStop } from '../transit/contract';
+import { isRecord } from './dateTime';
+import { isStop, localStop, type Stop } from './journey';
 import { validMinutes } from './plan';
 import type { CalendarDays } from './calendar';
 
-export type PointDraft = { name: string; stop: TransitStop | null; walkMinutes: string };
-export type SavedPoint = PointDraft & { id: string; stop: TransitStop };
+export type PointDraft = { name: string; stop: Stop | null; walkMinutes: string };
+export type SavedPoint = PointDraft & { id: string; stop: Stop };
 export type PointList = 'startPoints' | 'endPoints';
 export type PlannerSettings = {
   startPoints: SavedPoint[];
@@ -18,7 +19,7 @@ export function createDefaultSettings(): PlannerSettings {
 export function validatePoint(input: PointDraft) {
   const errors: Partial<Record<keyof PointDraft, string>> = {};
   if (!input.name.trim() || input.name.length > 120) errors.name = 'Wpisz nazwę punktu (do 120 znaków).';
-  if (!isStop(input.stop) || input.stop.cityId !== KRAKOW_CITY.id) errors.stop = 'Wybierz przystanek ZTP Kraków z listy.';
+  if (!isStop(input.stop)) errors.stop = 'Wpisz nazwę przystanku (do 240 znaków).';
   if (!validMinutes(input.walkMinutes)) errors.walkMinutes = 'Wpisz od 0 do 180 minut.';
   return errors;
 }
@@ -56,4 +57,11 @@ export function settingsWithPlanPoints(settings: PlannerSettings, days: Calendar
     }
   }
   return snapshot;
+}
+
+export function migrateSettings(value: unknown): PlannerSettings | null {
+  if (!isRecord(value) || !Array.isArray(value.startPoints) || !Array.isArray(value.endPoints)) return null;
+  const points = (items: unknown[]) => items.map((point) => isRecord(point) ? { ...point, stop: localStop(point.stop) } : point);
+  const settings = { ...value, startPoints: points(value.startPoints), endPoints: points(value.endPoints) };
+  return isPlannerSettings(settings) ? settings : null;
 }

@@ -1,18 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
   calendarEntry, createCalendarDay, isStoredCalendar, migrateCalendar, moveCalendarDay, validDayDetails,
   type CalendarDay, type CalendarDays,
 } from './calendar';
-import { formatDate, isStoredPlan, migrateJakdojadePlan, migrateLegacyPlan, type PlanInput } from './plan';
+import { formatDate, isStoredPlan, calculatePlan, migratePreviousPlan, type PlanInput } from './plan';
 import { importableDays } from './planTransfer';
 import { useStoredSettings } from './StoredSettingsProvider';
 
-const STORAGE_KEY = 'travelplanner.calendar.v2';
+const STORAGE_KEY = 'travelplanner.calendar.v3';
 
-export function useStoredPlan() {
-  const { addPlanPoints } = useStoredSettings();
+function useStoredPlanState() {
+  const { addPlanPoints, settings } = useStoredSettings();
   const [selectedDate, selectDate] = useState(() => formatDate(new Date()));
   const [drafts, setDrafts] = useState<CalendarDays>({});
   const [savedDays, setSavedDays] = useState<CalendarDays>({});
@@ -21,7 +21,10 @@ export function useStoredPlan() {
   const saveInProgress = useRef(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [migrationNotice, setMigrationNotice] = useState<string | null>(null);
-  const emptyDay = useMemo(() => createCalendarDay(selectedDate), [selectedDate]);
+  const emptyDay = useMemo(() => {
+    const empty = createCalendarDay(selectedDate);
+    return { ...empty, plan: { ...empty.plan, bufferMinutes: settings.bufferMinutes } };
+  }, [selectedDate, settings.bufferMinutes]);
   const entry = useMemo(() => calendarEntry(savedDays, selectedDate), [savedDays, selectedDate]);
   const day = drafts[selectedDate] ?? entry?.day ?? emptyDay;
 
@@ -37,13 +40,13 @@ export function useStoredPlan() {
           setSavedDays(stored);
           return;
         }
-        const previousCalendar = await AsyncStorage.getItem('travelplanner.calendar.v1');
+        const previousCalendar = await AsyncStorage.getItem('travelplanner.calendar.v2') ?? await AsyncStorage.getItem('travelplanner.calendar.v1');
         if (!active) return;
         if (previousCalendar !== null) {
           const migrated = migrateCalendar(JSON.parse(previousCalendar));
           if (!migrated) throw new Error('Invalid previous calendar');
           setSavedDays(migrated);
-          setMigrationNotice('Wczytano poprzedni kalendarz. Możesz teraz nadawać nazwy i ustawiać powtarzanie planów.');
+          setMigrationNotice('Wczytano poprzedni kalendarz. Uzupełnij ręcznie linie i godziny połączeń w zapisanych planach.');
           return;
         }
         for (const key of ['travelplanner.plan.v3', 'travelplanner.plan.v2', 'travelplanner.plan.v1']) {
@@ -51,8 +54,7 @@ export function useStoredPlan() {
           if (!active) return;
           if (previous === null) continue;
           const value: unknown = JSON.parse(previous);
-          const plan = key.endsWith('v3') ? (isStoredPlan(value) ? value : null)
-            : key.endsWith('v2') ? migrateJakdojadePlan(value) : migrateLegacyPlan(value);
+          const plan = migratePreviousPlan(value);
           if (!plan) throw new Error('Invalid previous plan');
           const migrated = { ...createCalendarDay(plan.date), plan };
           if (isStoredPlan(plan)) setSavedDays({ [plan.date]: migrated });
@@ -71,15 +73,15 @@ export function useStoredPlan() {
     return () => { active = false; };
   }, []);
 
-  async function persist(remove: boolean, departure: string | null = null): Promise<boolean> {
-    if (loading || saveInProgress.current || (!remove && (!isStoredPlan(day.plan) || !validDayDetails(day)))) return false;
+  async function persist(remove: boolean): Promise<boolean> {
+    if (loading || saveInProgress.current || (!remove && (!calculatePlan(day.plan).ok || !validDayDetails(day)))) return false;
     const date = selectedDate;
     const sourceDate = entry?.sourceDate ?? date;
     const snapshot = { ...savedDays };
     delete snapshot[sourceDate];
     if (!remove) {
       const anchorDate = day.recurrence ? sourceDate : date;
-      snapshot[anchorDate] = moveCalendarDay({ ...day, name: day.name.trim(), preferredDeparture: departure }, anchorDate);
+      snapshot[anchorDate] = moveCalendarDay({ ...day, name: day.name.trim() }, anchorDate);
       if (!isStoredCalendar(snapshot)) {
         setStorageError('Nie można zapisać cyklu z tą godziną w jego dniu początkowym. Sprawdź godzinę przy zmianie czasu.');
         return false;
@@ -145,27 +147,38 @@ export function useStoredPlan() {
     setDrafts((previous) => {
       const current = previous[selectedDate] ?? day;
       if (current.plan[key] === value) return previous;
-      return { ...previous, [selectedDate]: { ...current, plan: { ...current.plan, [key]: value }, preferredDeparture: null } };
-    });
-  }
-
-  function preferDeparture(departure: string) {
-    if (saveInProgress.current) return;
-    setDrafts((previous) => {
-      const current = previous[selectedDate] ?? day;
-      if (current.preferredDeparture === departure) return previous;
-      return { ...previous, [selectedDate]: { ...current, preferredDeparture: departure } };
+      const plan = { ...current.plan, [key]: value };
+      if (key === 'fromStop' || key === 'toStop') {
+        plan.legs = plan.legs.map((leg, index) => ({ ...leg,
+          from: index === 0 ? plan.fromStop?.label ?? '' : leg.from,
+          to: index === plan.legs.length - 1 ? plan.toStop?.label ?? '' : leg.to,
+        }));
+      }
+      return { ...previous, [selectedDate]: { ...current, plan } };
     });
   }
 
   const saved = !!entry && JSON.stringify(entry.day) === JSON.stringify(day);
   return {
-    day, plan: day.plan, preferredDeparture: day.preferredDeparture, drafts, savedDays, selectedDate, selectDate,
+    day, plan: day.plan, drafts, savedDays, selectedDate, selectDate,
     sourceDate: entry?.sourceDate ?? selectedDate, hasEntry: !!entry || !!drafts[selectedDate],
     isSeries: !!entry?.day.recurrence,
-    updatePlan, updateDay, preferDeparture, importDays, loading, saving, saved,
-    save: (departure: string | null) => persist(false, departure), remove: () => persist(true), storageError, migrationNotice,
+    updatePlan, updateDay, importDays, loading, saving, saved,
+    save: () => persist(false), remove: () => persist(true), storageError, migrationNotice,
   };
 }
 
-export type StoredPlan = ReturnType<typeof useStoredPlan>;
+export type StoredPlan = ReturnType<typeof useStoredPlanState>;
+
+const PlanContext = createContext<StoredPlan | null>(null);
+
+export function StoredPlanProvider({ children }: { children: ReactNode }) {
+  const value = useStoredPlanState();
+  return createElement(PlanContext.Provider, { value }, children);
+}
+
+export function useStoredPlan(): StoredPlan {
+  const context = useContext(PlanContext);
+  if (!context) throw new Error('useStoredPlan requires StoredPlanProvider');
+  return context;
+}

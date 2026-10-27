@@ -1,15 +1,22 @@
 ## Opis projektu dla agenta designowego
 
-Zaprojektuj mobilną aplikację **TravelPlanner** do planowania dojazdów komunikacją miejską w Krakowie i okolicach obsługiwanych przez KMK. Aplikacja pomaga zaplanować, o której trzeba wyjść z domu, aby dotrzeć na miejsce na wybraną godzinę.
+TravelPlanner to polska aplikacja mobilna React Native do planowania dojazdów
+z ręcznie wpisanymi połączeniami. Działa lokalnie i bez internetu.
 
-Użytkownik zapisuje punkty początkowe i końcowe wraz z przystankami oraz czasem dojścia pieszo. Wybiera dzień i godzinę dotarcia, a aplikacja wyszukuje do trzech propozycji przejazdu. Uwzględnia czas dojścia na przystanek, dojścia z przystanku i zapas bezpieczeństwa. Wybrany kurs można zapisać w kalendarzu, a najbliższy plan jest widoczny nad kalendarzem. Dni mogą się powtarzać w cyklach; plany da się też importować i eksportować jako plik.
+Użytkownik wpisuje punkty i przystanki lub wybiera je z własnego katalogu,
+ustala termin dotarcia, dojścia pieszo i zapas czasu. Dodaje linię oraz daty
+i godziny każdego odcinka, także przesiadki i przejścia między przystankami.
+Aplikacja oblicza godzinę wyjścia i pokazuje oś czasu od drzwi do celu.
 
-Główne obszary aplikacji:
+- **Plan** — najbliższy dojazd, kalendarz tygodniowy z rozwijanym miesiącem,
+  dodawanie i edycja dnia.
+- **Edytor** — nazwa, punkty, termin, ręczne odcinki połączenia, oś czasu,
+  zapis/usunięcie i cykliczność.
+- **Ustawienia** — własne punkty początkowe/docelowe i przystanki z czasem
+  dojścia, wspólny zapas oraz import/eksport planów w pliku JSON.
 
-- **Plan** — podsumowanie najbliższego dojazdu, kalendarz miesięczny oraz dodawanie i edycja planu dnia.
-- **Edytor dnia** — nazwa planu, wybór zapisanych punktów, godzina dotarcia, propozycje kursów i rozkład od wyjścia z domu do celu. Obsługuje też cykliczne plany.
-- **Ustawienia** — zarządzanie zapisanymi punktami początkowymi i końcowymi, przystankami, czasem dojścia oraz wspólnym zapasem czasu.
-
-To aplikacja **po polsku**, przeznaczona na telefon i zbudowana w React Native. Projekt dotyczy Krakowa — nie dodawaj wyboru miasta, lokalizacji GPS, powiadomień ani informacji o opóźnieniach na żywo. Rozkłady pochodzą z oficjalnych danych ZTP; aplikacja pokazuje aktualne propozycje na podstawie tych rozkładów.
-
-Przygotuj czytelny, spokojny interfejs do częstego, praktycznego użycia. Priorytetem są szybkie sprawdzenie najbliższego planu, łatwe wybranie dnia i czytelne porównanie kursów. Uwzględnij stany ładowania, brak zapisanych punktów, brak wyników i błędy wyszukiwania. Adresuj użytkownika prostymi polskimi komunikatami.
+Zachowaj istniejący ciemny motyw Nocturne Transit. Priorytetem są szybki odczyt
+godziny wyjścia i łatwe wpisywanie godzin, także podróży przez północ.
+Uwzględnij brak planów/punktów, niepoprawne godziny, niespójne przesiadki,
+spóźniony przyjazd i błędy zapisu. Używaj prostych polskich komunikatów.
+Aplikacja nie korzysta z ZTP, backendu, GPS ani automatycznych rozkładów.

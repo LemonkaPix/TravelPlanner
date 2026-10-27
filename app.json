@@ -5,8 +5,8 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "scheme": "travelplanner",
-    "userInterfaceStyle": "light",
-    "backgroundColor": "#F1F5FA",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0d1320",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.lemonkapix.travelplanner"

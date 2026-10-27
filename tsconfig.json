@@ -13,8 +13,7 @@
     "**/*.tsx"
   ],
   "exclude": [
-    "server",
-    "node_modules",
+    "**/node_modules",
     "ios",
     "android"
   ]
