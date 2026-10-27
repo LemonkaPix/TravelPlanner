@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { createDefaultSettings, isPlannerSettings, migrateSettings, settingsWithPlanPoints, type PlannerSettings } from './settings';
 import type { CalendarDays } from './calendar';
 
-const STORAGE_KEY = 'travelplanner.settings.v2';
+const STORAGE_KEY = 'travelplanner.settings.v3';
 type StoredSettings = {
   settings: PlannerSettings;
   loading: boolean;
@@ -27,7 +27,7 @@ export function StoredSettingsProvider({ children }: { children: ReactNode }) {
     async function load() {
       try {
         const current = await AsyncStorage.getItem(STORAGE_KEY);
-        const raw = current ?? await AsyncStorage.getItem('travelplanner.settings.v1');
+        const raw = current ?? await AsyncStorage.getItem('travelplanner.settings.v2') ?? await AsyncStorage.getItem('travelplanner.settings.v1');
         if (!active || raw === null) return;
         const value: unknown = JSON.parse(raw);
         const stored = current === null ? migrateSettings(value) : value;
@@ -46,7 +46,7 @@ export function StoredSettingsProvider({ children }: { children: ReactNode }) {
   async function saveSettings(snapshot: PlannerSettings): Promise<boolean> {
     if (loading || saveInProgress.current) return false;
     if (!isPlannerSettings(snapshot)) {
-      setStorageError('Ustawienia są niepoprawne. Sprawdź nazwy, przystanki i minuty (0–180).');
+      setStorageError('Ustawienia są niepoprawne. Sprawdź punkty, minuty i preferencje budzika.');
       return false;
     }
     saveInProgress.current = true;

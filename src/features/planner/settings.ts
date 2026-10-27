@@ -2,6 +2,7 @@ import { isRecord } from './dateTime';
 import { isStop, localStop, type Stop } from './journey';
 import { validMinutes } from './plan';
 import type { CalendarDays } from './calendar';
+import { defaultAlarmPreferences, isAlarmPreferences, type AlarmPreferences } from './alarms';
 
 export type PointDraft = { name: string; stop: Stop | null; walkMinutes: string };
 export type SavedPoint = PointDraft & { id: string; stop: Stop };
@@ -10,10 +11,11 @@ export type PlannerSettings = {
   startPoints: SavedPoint[];
   endPoints: SavedPoint[];
   bufferMinutes: string;
+  alarm: AlarmPreferences;
 };
 
 export function createDefaultSettings(): PlannerSettings {
-  return { startPoints: [], endPoints: [], bufferMinutes: '10' };
+  return { startPoints: [], endPoints: [], bufferMinutes: '10', alarm: defaultAlarmPreferences() };
 }
 
 export function validatePoint(input: PointDraft) {
@@ -31,7 +33,7 @@ function isSavedPoint(value: unknown): value is SavedPoint {
 }
 
 export function isPlannerSettings(value: unknown): value is PlannerSettings {
-  if (!isRecord(value) || typeof value.bufferMinutes !== 'string' || !validMinutes(value.bufferMinutes) ||
+  if (!isRecord(value) || !isAlarmPreferences(value.alarm) || typeof value.bufferMinutes !== 'string' || !validMinutes(value.bufferMinutes) ||
       !Array.isArray(value.startPoints) || !Array.isArray(value.endPoints) ||
       !value.startPoints.every(isSavedPoint) || !value.endPoints.every(isSavedPoint)) return false;
   const ids = [...value.startPoints, ...value.endPoints].map((point) => point.id);
@@ -62,6 +64,6 @@ export function settingsWithPlanPoints(settings: PlannerSettings, days: Calendar
 export function migrateSettings(value: unknown): PlannerSettings | null {
   if (!isRecord(value) || !Array.isArray(value.startPoints) || !Array.isArray(value.endPoints)) return null;
   const points = (items: unknown[]) => items.map((point) => isRecord(point) ? { ...point, stop: localStop(point.stop) } : point);
-  const settings = { ...value, startPoints: points(value.startPoints), endPoints: points(value.endPoints) };
+  const settings = { ...value, alarm: defaultAlarmPreferences(), startPoints: points(value.startPoints), endPoints: points(value.endPoints) };
   return isPlannerSettings(settings) ? settings : null;
 }

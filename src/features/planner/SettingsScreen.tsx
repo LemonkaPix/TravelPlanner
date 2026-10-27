@@ -14,6 +14,7 @@ import { PlanTransferPanel } from './PlanTransferPanel';
 import { validatePoint, type PointDraft, type PointList, type SavedPoint } from './settings';
 import { useStoredSettings } from './StoredSettingsProvider';
 import { useStoredPlan } from './useStoredPlan';
+import { AlarmSettingsSection } from './AlarmSettingsSection';
 
 const emptyPoint = (): PointDraft => ({ name: '', stop: null, walkMinutes: '5' });
 const BUFFER_PRESETS = [
@@ -494,7 +495,7 @@ export default function SettingsScreen() {
               </View>
               <Text accessibilityRole="header" style={styles.heroBannerTitle}>Preferencje dojazdów</Text>
               <Text style={styles.heroBannerSubtitle}>
-                Dostosuj punkty orientacyjne, czasy dojścia i zapas czasu.
+                Dostosuj punkty orientacyjne, czasy dojścia, zapas czasu i budziki.
               </Text>
             </View>
             <View style={styles.heroBannerIconBox}>
@@ -509,6 +510,8 @@ export default function SettingsScreen() {
 
           {/* SEKCJA 2: Globalny bufor bezpieczeństwa */}
           <BufferSection />
+
+          <AlarmSettingsSection />
 
           {/* SEKCJA 3: Kopie zapasowe i synchronizacja */}
           <PlanTransferPanel store={planStore} />

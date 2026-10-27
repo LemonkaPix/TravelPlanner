@@ -17,6 +17,7 @@ import type { SavedPoint } from './settings';
 import { useStoredSettings } from './StoredSettingsProvider';
 import { calendarDate, calendarDateKey, validDayDetails } from './calendar';
 import { RecurrenceFields } from './RecurrenceFields';
+import { DayAlarmPanel } from './DayAlarmPanel';
 
 function extractLineCode(label: string): string {
   const token = label.trim().split(/\s+/)[0];
@@ -610,6 +611,9 @@ export function PlanDayEditor({ store, onClose }: { store: StoredPlan; onClose: 
             onChange={(legs) => updatePlan('legs', legs)} />
 
           <DepartureCard plan={plan} now={now} />
+
+          {saved && <DayAlarmPanel key={selectedDate} day={day} now={now} disabled={saving} />}
+          {!saved && canSave && <Text style={text.body}>Zapisz plan, aby ustawić budzik dla tego dnia.</Text>}
 
           {/* Action Suite & Persistence Options */}
           <View style={styles.actionSuiteCard}>

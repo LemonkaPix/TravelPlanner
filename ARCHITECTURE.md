@@ -18,8 +18,9 @@ Polish. There is no backend, provider API, timetable download or network search.
 | Date/time | `src/features/planner/dateTime.ts` | Europe/Warsaw formatting/parsing; rejects nonexistent or ambiguous DST wall times; shared record/label guards |
 | Calendar/recurrence | `src/features/planner/PlanCalendar.tsx`, `calendar.ts`, `RecurrenceFields.tsx` | Monday-first weekly strip with date/time and plan markers, expandable month with marker legend, today shortcut; selected-day summary lives below the calendar; lazy recurrence and next occurrence, calendar guards and migration |
 | Plan storage | `src/features/planner/useStoredPlan.ts` | Shared calendar context, AsyncStorage v3, isolated per-date drafts, serialized explicit writes, cycle editing/deletion, additive import |
-| Settings | `src/app/settings.tsx` → `src/features/planner/SettingsScreen.tsx` | Local start/end point CRUD in modals with typed stop names, common buffer, file transfer and local-data information |
-| Settings model/storage | `src/features/planner/settings.ts`, `StoredSettingsProvider.tsx` | Stable local point IDs, validation, AsyncStorage v2, hydration, serialized writes, legacy label conversion, missing-point restoration for imports |
+| Settings | `src/app/settings.tsx` → `src/features/planner/SettingsScreen.tsx` | Local start/end point CRUD in modals with typed stop names, common buffer, alarm preferences, file transfer and local-data information |
+| Settings model/storage | `src/features/planner/settings.ts`, `StoredSettingsProvider.tsx` | Stable local point IDs, validation, AsyncStorage v3, hydration, serialized writes, read-only v2/v1 migration, missing-point restoration for imports |
+| System alarms | `src/features/planner/AlarmSettingsSection.tsx`, `DayAlarmPanel.tsx` → `alarms.ts`, `systemAlarms.ts` | Preparation time and optional series; saved selected-day/editor preview plus separate handoff at the exact leave time; Android Clock intents with date safety guards; Expo Go creation guard; manual times on iOS/web |
 | Saved point selection | `src/features/planner/SavedPointPicker.tsx` | Collapsed start/end dropdowns with settings shortcut; applied snapshots stay usable after catalog changes |
 | Plan transfer | `src/features/planner/PlanTransferPanel.tsx` → `planTransfer.ts`, `planFiles.ts` / `planFiles.web.ts` | Versioned JSON export/import, preview, date-conflict skipping, missing-point restoration; native share sheet / browser download and system document picker |
 | Forms/theme | `src/components/FormField.tsx`, `src/constants/theme.ts` | Accessible labelled fields, existing Nocturne Transit dark surfaces, typography, color and elevation tokens |
@@ -35,6 +36,7 @@ Polish. There is no backend, provider API, timetable download or network search.
 `persisted anchors + recurrence → lazy calendar occurrences (no expanded copies or network)`.
 `persisted anchors → versioned JSON → native share sheet / browser download`.
 `document picker → size/format/version/plan guards → import preview → missing settings points → additive calendar write`.
+`saved selected occurrence + alarm preferences → preparation alarm series and exact leave-time alarm → preview → separate Android system Clock handoffs`.
 
 The removed `server/` source, server package/lockfile, transit HTTP client/search
 hooks, provider DTOs, stop search, automatic connection picker and `.env.example`
@@ -115,14 +117,70 @@ The calendar has no duplicate selected-day banner; its single summary card opens
 the shared editor. Destination shortcuts appear only when the selected day has
 no saved plan or draft. These display choices do not change stored plans.
 
-PlannerSettings has startPoints/endPoints and common bufferMinutes. Each SavedPoint
+PlannerSettings has startPoints/endPoints, common bufferMinutes and alarm preferences. Each SavedPoint
 has a stable ID, name (nonblank, up to 120 chars), Stop { label } (nonblank, up to
 240 chars), and walkMinutes (0–180). IDs are unique across both lists.
-`StoredSettingsProvider` reads `travelplanner.settings.v2`, falling back read-only
-to v1 and converting old stops to labels. Add/edit/delete/buffer actions serialize
+`StoredSettingsProvider` reads `travelplanner.settings.v3`, falling back read-only
+to v2 then v1, converting old stops to labels and adding default alarm preferences.
+Invalid present v3 data never falls back to old data. Add/edit/delete/buffer/alarm actions serialize
 explicit writes; failure retains editable input and the prior catalog. Catalog
 changes never mutate saved plan snapshots. Point forms use typed names and have
 no search lifecycle or server availability state.
+
+## System alarms
+
+`AlarmSettingsSection` saves preparationMinutes (1–720), seriesEnabled, count
+(2–10 including the last alarm) and intervalMinutes (1–180). Series-only numbers
+are validated when enabled; the series span must be shorter than 24 hours.
+Defaults are 60 minutes, series off, 2 alarms and a
+30-minute interval. The last alarm is leave time minus preparation; earlier alarms
+precede it by equal intervals, so the full preparation time remains available.
+The settings example uses an 08:00 departure. Existing v2/v1 settings retain their
+points and buffer and receive these defaults without writing until an explicit save.
+
+`DayAlarmPanel` appears below the saved selected-day card and in a saved day editor.
+Drafts require saving first. Each occurrence is handled independently even for a
+recurring plan: alarms do not repeat. The preview uses Europe/Warsaw and includes
+dates when alarms fall before the plan day. Clock extras use device-local hours.
+
+On Android, `systemAlarms` dynamically imports expo-intent-launcher and sends
+`android.intent.action.SET_ALARM` sequentially with integer HOUR/MINUTES, a dated
+label, vibration and SKIP_UI; no DAYS extra is sent. If Clock stays open, returning
+continues the series. `SHOW_ALARMS` opens Clock for checking and managing alarms.
+`app.json` declares `com.android.alarm.permission.SET_ALARM`. The native binary
+must be rebuilt to include the dependency and permission; generated native files
+are not edited. No notification permission, scheduler or custom ringing service
+is used. Expo's integer-extra conversion is required: RN Linking.sendIntent sends
+numbers as Doubles, which are incompatible with the Clock hour/minute extras.
+
+`systemAlarmCreationIssue` separates alarm creation from opening Clock. Expo Go
+is detected with `Constants.expoVersion` from the existing expo-constants
+dependency; SDK 58's `ExecutionEnvironment.StoreClient` also includes development
+builds, so it must not be used to exclude them. In Expo Go, the create button is
+disabled with an explanation that project permissions cannot be added to the
+installed host. Preview and `SHOW_ALARMS` remain available for manual entry.
+Native permission denials, missing IntentLauncher and missing Clock handlers
+receive distinct messages, rather than suggesting that every error means Clock
+is absent. No automatic retries can duplicate a partially handed-off series.
+`README.md` documents a local `npx expo run:android --device` build, its Android
+toolchain prerequisites and plan transfer from Expo Go's separate local storage.
+
+The standard Clock intent has no date parameter. Every requested alarm must be
+in the future and equal the next occurrence of its hour/minute in the device's
+timezone (usually within 24 hours). The whole series is checked before dispatch,
+and each alarm again immediately before its intent. Ambiguous wall times during
+a device-timezone DST overlap are rejected. Later dates and elapsed
+alarms remain previews with an explanation; they are never silently scheduled
+for an earlier day. No pending future handoff is stored. On iOS/web, creating
+alarms in the system Clock is unavailable through this integration; the preview
+and explicit manual-setting guidance remain visible.
+
+Clock provides no reliable creation confirmation or alarm IDs. Completion reports
+handoffs, failures report how many were handed off, and concurrent handoffs are
+blocked. The app does not claim to know whether an alarm remains enabled. Editing
+or deleting plans/preferences does not change alarms already handed off: users
+manage them in Clock. Alarm preferences are local settings, excluded from plan
+import/export; alarms themselves are owned by Clock, not persisted by this app.
 
 ## Import/export
 
@@ -149,9 +207,10 @@ operations and hydration prevent duplicate/dependent actions.
 Native configuration belongs in `app.json`; generated ios/android files are not
 edited. New Expo/React Native dependencies must use `npx expo install` and SDK 58
 documentation. File transfer retains expo-document-picker, expo-file-system and
-expo-sharing. The sharing plugin disables incoming-sharing features. No new
-packages or Expo APIs were added for manual connections; backend-only packages
-were removed with the separate server package/lockfile.
+expo-sharing. The sharing plugin disables incoming-sharing features. System Clock
+handoff adds expo-intent-launcher (~58.0.3) via `npx expo install`, using SDK 58
+documentation. Backend-only packages were removed with the separate server
+package/lockfile.
 
 Do not run tests, linters, builds, typechecks or automated verification without an
 explicit user request. This change uses static source review with code-reviewer;

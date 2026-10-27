@@ -35,10 +35,43 @@ Przyjazd z końcowym dojściem musi zapewniać wybrany zapas przed terminem.
 Przykład: odjazd o 08:10 i dojście 7 minut → wyjście o 08:03.
 Podsumowanie najbliższego planu korzysta z zapisanych godzin.
 
+## Budziki systemowe na Androidzie
+
+W Ustawieniach określ czas na przygotowanie oraz opcjonalną serię budzików.
+Przy zapisanym planie dnia zobaczysz wyliczone godziny i przycisk przekazania
+budzików do systemowego Zegara. Ostatni alarm pozostawia pełny czas przygotowania;
+wcześniejsze alarmy są dodawane w wybranych odstępach.
+
+Ustawianie budzików wymaga własnej wersji aplikacji z uprawnieniem
+`com.android.alarm.permission.SET_ALARM` zapisanym w `app.json`. Zmiana tego pliku
+nie nadaje uprawnień zainstalowanemu Expo Go. W Expo Go aplikacja pokazuje podgląd
+i pozwala otworzyć Zegar, aby ustawić godziny ręcznie; przekazywanie jest wyłączone.
+
+Aby zbudować i uruchomić własną wersję lokalnie, skonfiguruj Android Studio,
+Android SDK i JDK zgodnie z [instrukcją Expo](https://docs.expo.dev/guides/local-app-development/),
+podłącz telefon z debugowaniem USB i uruchom w katalogu projektu:
+
+```sh
+npx expo run:android --device
+```
+
+Polecenie generuje projekt natywny z `app.json`, buduje go, instaluje na telefonie
+i uruchamia TravelPlanner. Otwieraj zainstalowany TravelPlanner. `npm run android`
+tylko uruchamia serwer Expo i nie buduje aplikacji ani nie dodaje uprawnień.
+Przy zmianie uprawnień lub zależności natywnych potrzebna jest ponowna kompilacja
+uwzględniająca konfigurację. Nie edytuj ręcznie wygenerowanych plików `android/`.
+
+Dane Expo Go i własnej aplikacji są oddzielne. Przenieś plany przez eksport JSON
+w Expo Go i import pliku w TravelPlanner.
+
+Zegar przyjmuje godzinę bez daty. Alarm można przekazać, gdy jego najbliższe
+wystąpienie odpowiada wybranemu dniowi, zwykle w ciągu 24 godzin. Już dodane
+budziki zmieniasz i usuwasz w Zegarze; edycja planu ich nie aktualizuje.
+
 ## Dane i kopie zapasowe
 
 Pełne połączenia są zapisywane lokalnie w `travelplanner.calendar.v3`,
-a punkty i wspólny zapas w `travelplanner.settings.v2` (AsyncStorage).
+a punkty, wspólny zapas i ustawienia budzików w `travelplanner.settings.v3` (AsyncStorage).
 Zapis jest jawny; zamknięty bez zapisu szkic pozostaje tylko do końca sesji.
 Zmiana katalogu punktów nie zmienia wcześniej zapisanych tras.
 

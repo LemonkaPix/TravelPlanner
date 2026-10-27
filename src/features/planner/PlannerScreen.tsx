@@ -14,6 +14,7 @@ import type { SavedPoint } from './settings';
 import { useStoredSettings } from './StoredSettingsProvider';
 import { useStoredPlan } from './useStoredPlan';
 import { UpcomingPlanPanel } from './UpcomingPlanPanel';
+import { DayAlarmPanel } from './DayAlarmPanel';
 
 const weekdayNames = ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota'];
 
@@ -144,6 +145,12 @@ export default function PlannerScreen() {
               </>
             )}
           </Pressable>
+          {selectedStored && !selectedDraft && (
+            <DayAlarmPanel key={store.selectedDate} day={selectedStored.day} now={now} disabled={store.saving} />
+          )}
+          {selectedDraft && (
+            <Text style={text.body}>Zapisz zmiany planu, aby ustawić budzik dla tego dnia.</Text>
+          )}
         </View>
 
         {!activeEntry && settings.endPoints.length > 0 && (
